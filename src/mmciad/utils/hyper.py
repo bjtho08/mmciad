@@ -44,7 +44,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
     :param weight_path: Path to the base weight folder
     :type weight_path: str
     :param cls_wgts: A list containing the weights applied to each class,
-        or None
+    or None
     :type cls_wgts: None, or List of floats
     :param params: Dictionary of fixed parameters in the model
     :type params: Dict
