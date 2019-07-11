@@ -1,12 +1,15 @@
 """U-Net model implementation with keras"""
 
 import keras
-#from keras import backend as K
+from keras import backend as K
 from keras.models import Model
 from keras.layers.advanced_activations import LeakyReLU
 from keras.activations import relu
+from keras.layers.merge import add
 from keras.layers import (
+    Layer,
     Input,
+    Activation,
     Concatenate,
     Conv2D,
     MaxPooling2D,
@@ -17,6 +20,54 @@ from keras.layers import (
     
 )
 
+def _shortcut(input_: Layer, residual):
+    input_shape = K.int_shape(input_)
+    residual_shape = K.int_shape(residual)
+    #stride_width = int(round(input_shape[1] / residual_shape[1]))
+    #stride_height = int(round(input_shape[2] / residual_shape[2]))
+    #equal_channels = input_shape[3] == residual_shape[3]
+    shortcut = input_
+    #if stride_height > 1 or stride_width > 1 or not equal_channels:
+    #print("input:")
+    #print("name: '{}', shape: {}".format(input_.name, input_shape))
+    #print("residual:")
+    #print("name: '{}', shape: {}".format(residual.name, residual_shape))
+    shortcut = Conv2D(
+        filters=residual_shape[3],
+        kernel_size=1,
+        strides=(1, 1),
+        padding="same",
+        kernel_initializer="he_normal")(shortcut)
+    return add([shortcut, residual])
+
+
+def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, alpha, do=0):
+    n = BatchNormalization(name="block{}_bn1".format(level))(m)
+    n = Activation(acti)(n)
+    n = Conv2D(
+        filters=nb_filters,
+        kernel_size=1,
+        padding="same",
+        kernel_initializer=init,
+        name="block{}_conv1".format(level))(n)
+    n = BatchNormalization(name="block{}_bn2".format(level))(n)
+    n = Activation(acti)(n)
+    n = Conv2D(
+        filters=nb_filters,
+        kernel_size=conv_size,
+        padding="same",
+        kernel_initializer=init,
+        name="block{}_conv2".format(level))(n)
+    n = BatchNormalization(name="block{}_bn3".format(level))(n)
+    n = Activation("relu")(n)
+    n = Conv2D(
+        filters=nb_filters*4,
+        kernel_size=1,
+        padding="same",
+        kernel_initializer=init,
+        name="block{}_conv3".format(level))(n)
+    n = Dropout(drop, name="block{}_drop".format(level)) if do else n
+    return _shortcut(m, n)
 
 def conv_block(m, nb_filters, conv_size, init, acti, bn, level, alpha, do=0):
     if acti == 'relu':
@@ -48,10 +99,14 @@ def conv_block(m, nb_filters, conv_size, init, acti, bn, level, alpha, do=0):
 
 
 def level_block(
-    m, nb_filters, conv_size, init, depth, inc, acti, do, bn, mp, up, alpha, level=1
+    m, nb_filters, conv_size, init, depth, inc, acti, do, bn, mp, up, alpha, level=1, res=False
 ):
+    if res:
+        block = bottleneck
+    else:
+        block = conv_block
     if depth > 0:
-        n = conv_block(m, nb_filters, conv_size, init, acti, bn, level, alpha)
+        n = block(m, nb_filters, conv_size, init, acti, bn, level, alpha)
         m = (
             MaxPooling2D(pool_size=(2, 2), name="block{}_MaxPool".format(level))(n)
             if mp
@@ -78,6 +133,7 @@ def level_block(
             up,
             alpha,
             level + 1,
+            res
         )
         if up:
             m = UpSampling2D(size=(2, 2), name="block{}_upsampling".format(level))(m)
@@ -91,9 +147,9 @@ def level_block(
                 kernel_initializer=init,
             )(m)
         n = Concatenate(name="Concatenate_{}".format(depth))([n, m])
-        m = conv_block(n, nb_filters, conv_size, init, acti, bn, level + depth * 2, alpha)
+        m = block(n, nb_filters, conv_size, init, acti, bn, level + depth * 2, alpha)
     else:
-        m = conv_block(m, nb_filters, conv_size, init, acti, bn, level, alpha, do)
+        m = block(m, nb_filters, conv_size, init, acti, bn, level, alpha, do)
     return m
 
 
@@ -113,6 +169,7 @@ def u_net(
     upconv=True,
     pretrain=0,
     sigma_noise=0,
+    resnet=False,
 ):
     """U-Net model.
 
@@ -159,10 +216,14 @@ def u_net(
         maxpool,
         upconv,
         leaky_alpha,
+        res=resnet
     )
     if sigma_noise > 0:
         o = GaussianNoise(sigma_noise, name="GaussianNoise_preout")(o)
     o = Conv2D(output_channels, 1, activation="softmax", name="conv_out")(o)
+    if resnet:
+        pretrain = 0
+        print("pretraining currently incompatible with resnet blocks")
     if pretrain > 0:
         pretrained_model = keras.applications.vgg19.VGG19(
             include_top=False,

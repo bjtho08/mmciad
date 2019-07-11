@@ -246,10 +246,8 @@ def load_slides_as_dict(
     if load_gt and colors is None:
         raise ValueError("Required input missing: num_cls")
     ftype = "*.tif"
-    if m is None:
-        m = [0.0, 0.0, 0.0]
-    if s is None:
-        s = [1.0, 1.0, 1.0]
+    if (m is None or s is None) and (s != m):
+        raise ValueError("Both m and s or neither must be supplied")
     X_files = sorted(glob(join(path, prefix + ftype)))
     slide_names = [
         '-'.join(splitext(split(file)[1])[0].split("-")[1:]).replace("-corrected", "")
@@ -259,9 +257,10 @@ def load_slides_as_dict(
         name: imread(path).astype("float") / 255.0
         for name, path in zip(slide_names, X_files)
     }
-    for i in X.keys():
-        for c in range(3):
-            X[i][..., c] = (X[i][..., c] - m[c]) / s[c]
+    if m is not None and s is not None:
+        for i in X.keys():
+            for c in range(3):
+                X[i][..., c] = (X[i][..., c] - m[c]) / s[c]
     if load_gt:
         Y_files = sorted(glob(join(path, prefix, "*.png")))
         Y_color = {

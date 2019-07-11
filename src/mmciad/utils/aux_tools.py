@@ -30,6 +30,7 @@ def augmentor(img, segmap):
         iaa.Flipud(1),
         iaa.Affine(rotate=(-90, 90), mode="reflect"),
         iaa.Affine(scale=(0.8, 1.2), mode="reflect"),
+        iaa.PiecewiseAffine(scale=(0.01, 0.05), nb_rows=6, nb_cols=6, mode='reflect'),
         iaa.ElasticTransformation(alpha=(0, 80), sigma=(8.0), mode="reflect")
     ])
     seq_det = seq.to_deterministic()
