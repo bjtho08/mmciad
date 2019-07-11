@@ -41,25 +41,27 @@ def _shortcut(input_: Layer, residual):
     return add([shortcut, residual])
 
 
-def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, alpha, do=0):
-    n = BatchNormalization(name="block{}_bn1".format(level))(m)
+def batchnorm_activate(m, level, acti, iter_):
+    n = BatchNormalization(name="block{}_bn{}".format(level, iter_))(m)
     n = Activation(acti)(n)
+    return n
+
+def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, alpha, do=0):
+    n = batchnorm_activate(m, level, acti, 1)
     n = Conv2D(
         filters=nb_filters,
         kernel_size=1,
         padding="same",
         kernel_initializer=init,
         name="block{}_conv1".format(level))(n)
-    n = BatchNormalization(name="block{}_bn2".format(level))(n)
-    n = Activation(acti)(n)
+    n = batchnorm_activate(n, level, acti, 2)
     n = Conv2D(
         filters=nb_filters,
         kernel_size=conv_size,
         padding="same",
         kernel_initializer=init,
         name="block{}_conv2".format(level))(n)
-    n = BatchNormalization(name="block{}_bn3".format(level))(n)
-    n = Activation("relu")(n)
+    n = batchnorm_activate(m, level, acti, 3)
     n = Conv2D(
         filters=nb_filters*4,
         kernel_size=1,
