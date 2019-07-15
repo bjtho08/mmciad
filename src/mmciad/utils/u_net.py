@@ -46,7 +46,7 @@ def batchnorm_activate(m, level, acti, iter_):
     n = Activation(acti)(n)
     return n
 
-def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, alpha, do=0):
+def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, do=0):
     n = batchnorm_activate(m, level, acti, 1)
     n = Conv2D(
         filters=nb_filters,
@@ -71,44 +71,38 @@ def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, alpha, do=0):
     n = Dropout(drop, name="block{}_drop".format(level)) if do else n
     return _shortcut(m, n)
 
-def conv_block(m, nb_filters, conv_size, init, acti, bn, level, alpha, do=0):
-    if acti == 'relu':
-        alpha = 0
-    if acti == 'LeakyReLu' and alpha is None:
-        alpha = 0.3
+def conv_block(m, nb_filters, conv_size, init, acti, bn, level, do=0):
     n = Conv2D(
         nb_filters,
         conv_size,
-        activation='linear',
+        activation=acti,
         padding="same",
         kernel_initializer=init,
         name="block{}_conv1".format(level),
     )(m)
-    n = LeakyReLU(alpha=alpha)(n)
     n = BatchNormalization(name="block{}_bn1".format(level))(n) if bn else n
     n = Dropout(do, name="block{}_drop1".format(level))(n) if do else n
     n = Conv2D(
         nb_filters,
         conv_size,
-        activation='linear',
+        activation=acti,
         padding="same",
         kernel_initializer=init,
         name="block{}_conv2".format(level),
     )(n)
-    n = LeakyReLU(alpha=alpha)(n)
     n = BatchNormalization(name="block{}_bn2".format(level))(n) if bn else n
     return n
 
 
 def level_block(
-    m, nb_filters, conv_size, init, depth, inc, acti, do, bn, mp, up, alpha, level=1, res=False
+    m, nb_filters, conv_size, init, depth, inc, acti, do, bn, mp, up, level=1, res=False
 ):
     if res:
         block = bottleneck
     else:
         block = conv_block
     if depth > 0:
-        n = block(m, nb_filters, conv_size, init, acti, bn, level, alpha)
+        n = block(m, nb_filters, conv_size, init, acti, bn, level)
         m = (
             MaxPooling2D(pool_size=(2, 2), name="block{}_MaxPool".format(level))(n)
             if mp
@@ -133,7 +127,6 @@ def level_block(
             bn,
             mp,
             up,
-            alpha,
             level + 1,
             res
         )
@@ -149,9 +142,9 @@ def level_block(
                 kernel_initializer=init,
             )(m)
         n = Concatenate(name="Concatenate_{}".format(depth))([n, m])
-        m = block(n, nb_filters, conv_size, init, acti, bn, level + depth * 2, alpha)
+        m = block(n, nb_filters, conv_size, init, acti, bn, level + depth * 2)
     else:
-        m = block(m, nb_filters, conv_size, init, acti, bn, level, alpha, do)
+        m = block(m, nb_filters, conv_size, init, acti, bn, level, do)
     return m
 
 
@@ -163,7 +156,6 @@ def u_net(
     depth=4,
     inc_rate=2.0,
     activation="relu",
-    leaky_alpha=None,
     dropout=0,
     output_channels=5,
     batchnorm=False,
@@ -217,7 +209,6 @@ def u_net(
         batchnorm,
         maxpool,
         upconv,
-        leaky_alpha,
         res=resnet
     )
     if sigma_noise > 0:
