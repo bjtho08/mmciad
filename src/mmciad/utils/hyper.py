@@ -99,12 +99,18 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
             class_weights = [1 if k != 12 else 0 for k in cls_wgts.keys()]
         else:
             class_weights = ([v for v in cls_wgts.values()],)
-        param_strings = value_as_string(params)
+        
+        if internal_params["pretrain"] in "enable resnet":
+            internal_params["resnet"] = True
+            internal_params["pretrain"] = 0
+
+        param_strings = value_as_string(internal_params)
         model_base_path = osp.join(
             weight_path,
             internal_params["today_str"],
-            "{}".format(
+            "{} {}".format(
                 param_strings["loss_func"],
+                param_strings["opt"],
             ))
 
         if not os.path.exists(model_base_path):
@@ -125,9 +131,10 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
         )
         log_path = (
             "./logs/"
-            + "{}/{}/init_{}-act_{}-decay_{}-drop_{}-weights_{}-pretrain_{}-sigma_{}/".format(
+            + "{}/{} {}/init_{}-act_{}-decay_{}-drop_{}-weights_{}-pretrain_{}-sigma_{}/".format(
                 static_params["today_str"],
                 param_strings["loss_func"],
+                param_strings["opt"],
                 param_strings["init"],
                 param_strings["act"],
                 param_strings["decay"],
@@ -156,7 +163,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
             )
             model.compile(
                 loss=loss_func,
-                optimizer=Adam(lr=internal_params["lr"], decay=internal_params["decay"]),
+                optimizer=internal_params["opt"](internal_params["lr"]),
                 metrics=["acc"],
                 weighted_metrics=["acc"],
             )
@@ -199,7 +206,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
 
             model.compile(
                 loss=loss_func,
-                optimizer=Adam(lr=internal_params["lr"], decay=internal_params["decay"]),
+                optimizer=internal_params["opt"](internal_params["lr"]),
                 metrics=["acc"],
                 weighted_metrics=["acc"],
             )
@@ -257,11 +264,12 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 output_channels=internal_params["num_cls"],
                 batchnorm=internal_params["batchnorm"],
                 pretrain=internal_params["pretrain"],
+                resnet=internal_params["resnet"],
             )
 
             model.compile(
                 loss=loss_func,
-                optimizer=Adam(lr=internal_params["lr"], decay=internal_params["decay"]),
+                optimizer=internal_params["opt"](internal_params["lr"]),
                 metrics=["acc"],
                 weighted_metrics=["acc"],
             )
@@ -308,28 +316,3 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
         return history, model
     return talos_model
 
-# fit params
-# p = {
-#     "dropout": [0],
-#     "decay": [0.0],
-#     "lr": [1e-4],
-#     "sigma_noise": [0],
-#     "pretrain": [2, 0],
-#     "class_weights": [False, True],
-#     "loss_func": ["cat_FL", "cat_CE"]
-# }
-
-# weight_path = "./weights/"
-# dummy_x = np.empty((1, batch_size, 208, 208))
-# dummy_y = np.empty((1, batch_size))
-
-# t = ta.Scan(
-#     x=dummy_x,
-#     y=dummy_y,
-#     disable_progress_bar=False,
-#     print_params=True,
-#     model=talos_model,
-#     # functional_model=True,
-#     # grid_downsample=0.1,
-#     params=p,
-# )
