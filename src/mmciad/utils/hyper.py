@@ -13,7 +13,7 @@ from sklearn.metrics import accuracy_score
 
 from .custom_loss import categorical_focal_loss, weighted_loss, tversky_loss
 from .u_net import u_net
-from .modelcheckpoint import PatchedModelCheckpoint
+from .callbacks import PatchedModelCheckpoint, write_log
 
 IMG_ROWS, IMG_COLS, IMG_CHANNELS = (None, None, 3)
 # architecture params
@@ -103,6 +103,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
         if str(internal_params["pretrain"]) in "enable resnet":
             internal_params["resnet"] = True
             internal_params["pretrain"] = 0
+            internal_params["nb_filters_0"] = 32
 
         param_strings = value_as_string(internal_params)
         model_base_path = osp.join(
@@ -311,6 +312,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                     PatchedModelCheckpoint(
                         modelpath, verbose=0, monitor="loss", save_best_only=True
                     ),
+
                 ],
             )
         return history, model
