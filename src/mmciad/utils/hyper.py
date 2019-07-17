@@ -12,7 +12,7 @@ from keras.optimizers import (SGD, Adadelta, Adagrad, Adam, Adamax, Nadam,
 from keras_tqdm import TQDMNotebookCallback
 from sklearn.metrics import accuracy_score
 
-from mmciad.utils.callbacks import PatchedModelCheckpoint, write_log
+from mmciad.utils.callbacks import PatchedModelCheckpoint, WriteLog
 
 from .custom_loss import categorical_focal_loss, tversky_loss, weighted_loss
 from .u_net import u_net
@@ -56,7 +56,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
     :type train_generator: Class
     """
 
-    def talos_model(x, y, val_x, val_y, params):
+    def talos_model(x, y, val_x, val_y, talos_params):
         """Talos model setup
 
         :param x: Dummy input needed for talos framework
@@ -74,7 +74,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
         _ = x, y, val_x, val_y
         internal_params = OrderedDict()
         internal_params.update(static_params)
-        internal_params.update(params)
+        internal_params.update(talos_params)
         if internal_params["loss_func"] == "cat_CE":
             loss_func = categorical_crossentropy
         elif internal_params["loss_func"] == "cat_FL":
@@ -102,10 +102,12 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
         else:
             class_weights = ([v for v in cls_wgts.values()],)
         
+        depth = 4
         if str(internal_params["pretrain"]) in "enable resnet":
             internal_params["resnet"] = True
             internal_params["pretrain"] = 0
             internal_params["nb_filters_0"] = 32
+            depth = 3
 
         param_strings = value_as_string(internal_params)
         model_base_path = osp.join(
@@ -156,7 +158,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 internal_params["shape"],
                 int(internal_params["nb_filters_0"]),
                 sigma_noise=internal_params["sigma_noise"],
-                depth=4,
+                depth=depth,
                 initialization=internal_params["init"],
                 activation=internal_params["act"],
                 dropout=internal_params["dropout"],
@@ -168,7 +170,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 loss=loss_func,
                 optimizer=internal_params["opt"](internal_params["lr"]),
                 metrics=["acc"],
-                weighted_metrics=["acc"],
+                #weighted_metrics=["acc"],
             )
 
             history = model.fit_generator(
@@ -180,7 +182,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 class_weight=class_weights,
                 verbose=internal_params["verbose"],
                 callbacks=[
-                    write_log(params),
+                    WriteLog(internal_params),
                     TQDMNotebookCallback(
                         metric_format="{name}: {value:0.4f}",
                         leave_inner=True,
@@ -212,7 +214,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 loss=loss_func,
                 optimizer=internal_params["opt"](internal_params["lr"]),
                 metrics=["acc"],
-                weighted_metrics=["acc"],
+                #weighted_metrics=["acc"],
             )
 
             history = model.fit_generator(
@@ -225,7 +227,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 class_weight=class_weights,
                 verbose=internal_params["verbose"],
                 callbacks=[
-                    write_log(params),
+                    WriteLog(internal_params),
                     TQDMNotebookCallback(
                         metric_format="{name}: {value:0.4f}",
                         leave_inner=True,
@@ -262,7 +264,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 internal_params["shape"],
                 int(internal_params["nb_filters_0"]),
                 sigma_noise=internal_params["sigma_noise"],
-                depth=4,
+                depth=depth,
                 initialization=internal_params["init"],
                 activation=internal_params["act"],
                 dropout=internal_params["dropout"],
@@ -276,7 +278,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 loss=loss_func,
                 optimizer=internal_params["opt"](internal_params["lr"]),
                 metrics=["acc"],
-                weighted_metrics=["acc"],
+                #weighted_metrics=["acc"],
             )
 
             history = model.fit_generator(
@@ -288,7 +290,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 class_weight=class_weights,
                 verbose=internal_params["verbose"],
                 callbacks=[
-                    write_log(params),
+                    WriteLog(internal_params),
                     TQDMNotebookCallback(
                         metric_format="{name}: {value:0.4f}",
                         leave_inner=True,

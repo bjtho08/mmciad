@@ -1,53 +1,61 @@
-import logging
-import numpy as np
+"""Adds a few custom callbacks. Currently write_logs() and
+PatchedModelCheckpoint()
+"""
 import warnings
-from time import sleep
+import logging
 from logging.handlers import RotatingFileHandler
+from time import sleep
+
+import numpy as np
 from keras import backend as K
 from keras.callbacks import Callback
 
-class write_log(Callback):
+
+class WriteLog(Callback):
     """Logging callback writes relevant training info to separate log"""
     def __init__(self, params=None):
         """__init__
-        
+
         :param params: model hyperparameters, defaults to None
         :type params: dict, optional
         """
-		super(write_log, self).__init__()
+        super(WriteLog, self).__init__()
         self.params = params or {}
         self.logger = logging.getLogger("Training Log")
         self.logger.setLevel(logging.INFO)
-        self.handler = RotatingFileHandler("traininglog.txt", maxBytes=20000, backupCount=5)
-        self.formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        self.handler = RotatingFileHandler(
+            "traininglog.txt", maxBytes=20000, backupCount=5
+        )
+        self.formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
         self.handler.setFormatter(self.formatter)
         self.logger.addHandler(self.handler)
-        self.lr = 0
-
+        self.old_lr = 0
 
     def on_train_begin(self, logs=None):
         self.logger.info("Training started")
-        self.lr = K.get_value(self.model.optimizer.lr)
+        self.old_lr = K.get_value(self.model.optimizer.lr)
         if self.params:
-            self.logger.info("Current parameters: ", self.params)
+            self.logger.info("Current parameters: %s" % self.params)
 
     def on_train_end(self, logs=None):
         self.logger.info("Training finished.\n\n")
 
     def on_epoch_end(self, epoch, logs=None):
         self.logger.info(
-            "Epoch: {:5d}:\t".format(epoch +1),
+            "Epoch: {:5d}:\t".format(epoch + 1),
             "loss: {:7.4f}, acc: {:1.4f}, val_loss: {:7.4f}, val_acc: {:1.4f}".format(
                 logs["loss"], logs["acc"], logs["val_loss"], logs["val_acc"])
         )
         new_lr = K.get_value(self.model.optimizer.lr)
-        if self.lr > new_lr:
+        if self.old_lr > new_lr:
             logger.info(
                 "Learning rate reduced from {:1.7f} to {:1.7f}".format(
-                    self.lr, new_lr
+                    self.old_lr, new_lr
                 )
             )
-            self.lr = new_lr
+            self.old_lr = new_lr
 
 
 class PatchedModelCheckpoint(Callback):
@@ -133,23 +141,24 @@ class PatchedModelCheckpoint(Callback):
                     )
                     self.logger.warning(
                         'Can save best model only with %s available, '
-                        'skipping.' % (self.monitor), RuntimeWarning
+                        'skipping.' % (self.monitor)
                     )
                 else:
                     if self.monitor_op(current, self.best):
                         if self.verbose > 0:
-                            print('\nEpoch %05d: %s improved from %0.5f to %0.5f,'
-                                  ' saving model to %s'
-                                  % (epoch + 1, self.monitor, self.best,
-                                     current, filepath)
-                            )
-                        self.logger.info('\nEpoch %05d: %s improved from %0.5f to %0.5f,'
+                            print(
+                                '\nEpoch %05d: %s improved from %0.5f to %0.5f,'
                                 ' saving model to %s'
                                 % (epoch + 1, self.monitor, self.best,
                                     current, filepath)
+                            )
+                        self.logger.info(
+                            '\nEpoch %05d: %s improved from %0.5f to %0.5f,'
+                            ' saving model to %s'
+                            % (epoch + 1, self.monitor, self.best, current, filepath)
                         )
                         self.best = current
-                        
+
                         saved_correctly = False
                         while not saved_correctly:
                             try:

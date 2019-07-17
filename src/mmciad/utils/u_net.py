@@ -37,13 +37,14 @@ def _shortcut(input_: Layer, residual):
         kernel_size=1,
         strides=(1, 1),
         padding="same",
-        kernel_initializer="he_normal")(shortcut)
-    return add([shortcut, residual])
+        kernel_initializer="he_normal",
+        name="shortcut_{}".format("_".join(residual.name.split("_")[:2])))(shortcut)
+    return add([shortcut, residual], name="add_{}".format("_".join(residual.name.split("_")[:2])))
 
 
 def batchnorm_activate(m, level, acti, iter_):
     n = BatchNormalization(name="block{}_bn{}".format(level, iter_))(m)
-    n = Activation(acti)(n)
+    n = Activation(acti, name="block{}_activation{}".format(level, iter_))(n)
     return n
 
 def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, do=0):
@@ -61,7 +62,7 @@ def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, do=0):
         padding="same",
         kernel_initializer=init,
         name="block{}_conv2".format(level))(n)
-    n = batchnorm_activate(m, level, acti, 3)
+    n = batchnorm_activate(n, level, acti, 3)
     n = Conv2D(
         filters=nb_filters*4,
         kernel_size=1,
@@ -102,49 +103,33 @@ def level_block(
     else:
         block = conv_block
     if depth > 0:
-        n = block(m, nb_filters, conv_size, init, acti, bn, level)
+        n = block(m, nb_filters, conv_size, init, acti, bn, str(level) + '_d')
         m = (
-            MaxPooling2D(pool_size=(2, 2), name="block{}_MaxPool".format(level))(n)
+            MaxPooling2D(pool_size=(2, 2), name="block{}_d_MaxPool".format(level))(n)
             if mp
             else Conv2D(
-                nb_filters,
-                conv_size,
-                strides=2,
-                padding="same",
-                kernel_initializer=init,
+                nb_filters, conv_size, strides=2, padding="same", kernel_initializer=init,
             )(n)
         )
-        m = Dropout(do, name="block{}_drop2".format(level))(m) if do else m
+        m = Dropout(do, name="block{}_d_drop2".format(level))(m) if do else m
         m = level_block(
-            m,
-            int(inc * nb_filters),
-            conv_size,
-            init,
-            depth - 1,
-            inc,
-            acti,
-            do,
-            bn,
-            mp,
-            up,
-            level + 1,
-            res
+            m, int(inc * nb_filters),
+            conv_size, init, depth - 1,
+            inc, acti, do, bn, mp, up,
+            level + 1, res
         )
         if up:
-            m = UpSampling2D(size=(2, 2), name="block{}_upsampling".format(level))(m)
+            m = UpSampling2D(size=(2, 2), name="block{}_u_upsampling".format(level))(m)
         else:
             m = Conv2DTranspose(
-                nb_filters,
-                3,
-                strides=2,
-                activation=acti,
-                padding="same",
+                nb_filters, 3, strides=2,
+                activation=acti, padding="same",
                 kernel_initializer=init,
             )(m)
         n = Concatenate(name="Concatenate_{}".format(depth))([n, m])
-        m = block(n, nb_filters, conv_size, init, acti, bn, level + depth * 2)
+        m = block(n, nb_filters, conv_size, init, acti, bn, str(level) + '_u')
     else:
-        m = block(m, nb_filters, conv_size, init, acti, bn, level, do)
+        m = block(m, nb_filters, conv_size, init, acti, bn, str(level), do)
     return m
 
 
