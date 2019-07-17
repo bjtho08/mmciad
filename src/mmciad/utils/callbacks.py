@@ -44,7 +44,7 @@ class WriteLog(Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         self.logger.info(
-            "Epoch: {:5d}:\t".format(epoch + 1),
+            "Epoch: {:5d}:\t".format(epoch + 1) +
             "loss: {:7.4f}, acc: {:1.4f}, val_loss: {:7.4f}, val_acc: {:1.4f}".format(
                 logs["loss"], logs["acc"], logs["val_loss"], logs["val_acc"])
         )
@@ -107,8 +107,8 @@ class PatchedModelCheckpoint(Callback):
                 RuntimeWarning
             )
             self.logger.warning(
-                'ModelCheckpoint mode %s is unknown, '
-                'fallback to auto mode.' % (mode)
+                'ModelCheckpoint mode {} is unknown, '.format(mode) +
+                'fallback to auto mode.'
             )
             mode = 'auto'
 
@@ -140,8 +140,8 @@ class PatchedModelCheckpoint(Callback):
                         'skipping.' % (self.monitor), RuntimeWarning
                     )
                     self.logger.warning(
-                        'Can save best model only with %s available, '
-                        'skipping.' % (self.monitor)
+                        "Can save best model only with" + 
+                        " {} available, skipping.".format(self.monitor)
                     )
                 else:
                     if self.monitor_op(current, self.best):
@@ -153,9 +153,11 @@ class PatchedModelCheckpoint(Callback):
                                     current, filepath)
                             )
                         self.logger.info(
-                            '\nEpoch %05d: %s improved from %0.5f to %0.5f,'
-                            ' saving model to %s'
-                            % (epoch + 1, self.monitor, self.best, current, filepath)
+                            "\nEpoch {:5d}: ".format(epoch + 1) + 
+                            "{:s} improved from {:0.5f} to {:0.5f},".format(
+                                self.monitor, self.best, current
+                            ) +
+                            ' saving model to {:s}'.format(filepath)
                         )
                         self.best = current
 
