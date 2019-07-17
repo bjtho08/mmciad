@@ -129,7 +129,7 @@ def level_block(
         n = Concatenate(name="Concatenate_{}".format(depth))([n, m])
         m = block(n, nb_filters, conv_size, init, acti, bn, str(level) + '_u')
     else:
-        m = block(m, nb_filters, conv_size, init, acti, bn, str(level), do)
+        m = block(m, nb_filters, conv_size, init, acti, bn, str(level) + "_bottom", do)
     return m
 
 
