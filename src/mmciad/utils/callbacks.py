@@ -14,7 +14,7 @@ class write_log(Callback):
         :param params: model hyperparameters, defaults to None
         :type params: dict, optional
         """
-		super(ModelCheckpointLight, self).__init__()
+		super(write_log, self).__init__()
         self.params = params or {}
         self.logger = logging.getLogger("Training Log")
         self.logger.setLevel(logging.INFO)
