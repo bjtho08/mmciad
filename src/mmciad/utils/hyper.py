@@ -7,13 +7,15 @@ from collections import OrderedDict
 
 from keras.callbacks import EarlyStopping, ReduceLROnPlateau, TensorBoard
 from keras.losses import categorical_crossentropy
-from keras.optimizers import SGD, Adadelta, Adagrad, Adam, Adamax, Nadam, RMSprop
+from keras.optimizers import (SGD, Adadelta, Adagrad, Adam, Adamax, Nadam,
+                              RMSprop)
 from keras_tqdm import TQDMNotebookCallback
 from sklearn.metrics import accuracy_score
 
-from .custom_loss import categorical_focal_loss, weighted_loss, tversky_loss
+from mmciad.utils.callbacks import PatchedModelCheckpoint, write_log
+
+from .custom_loss import categorical_focal_loss, tversky_loss, weighted_loss
 from .u_net import u_net
-from .callbacks import PatchedModelCheckpoint, write_log
 
 IMG_ROWS, IMG_COLS, IMG_CHANNELS = (None, None, 3)
 # architecture params
@@ -320,4 +322,3 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
             )
         return history, model
     return talos_model
-
