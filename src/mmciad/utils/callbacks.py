@@ -50,7 +50,7 @@ class WriteLog(Callback):
         )
         new_lr = K.get_value(self.model.optimizer.lr)
         if self.old_lr > new_lr:
-            logger.info(
+            self.logger.info(
                 "Learning rate reduced from {:1.7f} to {:1.7f}".format(
                     self.old_lr, new_lr
                 )
@@ -107,8 +107,9 @@ class PatchedModelCheckpoint(Callback):
                 RuntimeWarning
             )
             self.logger.warning(
-                'ModelCheckpoint mode {} is unknown, '.format(mode) +
-                'fallback to auto mode.'
+                'ModelCheckpoint mode %s is unknown, ' +
+                'fallback to auto mode.',
+                mode
             )
             mode = 'auto'
 
@@ -141,7 +142,8 @@ class PatchedModelCheckpoint(Callback):
                     )
                     self.logger.warning(
                         "Can save best model only with" + 
-                        " {} available, skipping.".format(self.monitor)
+                        " %s available, skipping.",
+                        self.monitor
                     )
                 else:
                     if self.monitor_op(current, self.best):
@@ -153,11 +155,10 @@ class PatchedModelCheckpoint(Callback):
                                     current, filepath)
                             )
                         self.logger.info(
-                            "\nEpoch {:5d}: ".format(epoch + 1) + 
-                            "{:s} improved from {:0.5f} to {:0.5f},".format(
-                                self.monitor, self.best, current
-                            ) +
-                            ' saving model to {:s}'.format(filepath)
+                            "\nEpoch %5d: " 
+                            + "%s improved from %0.5f to %0.5f,"
+                            + ' saving model to %s',
+                            epoch + 1, self.monitor, self.best, current, filepath
                         )
                         self.best = current
 
