@@ -212,7 +212,7 @@ def u_net(
         )
         w = []
         pretrain_layers = [
-            "block{}_conv{}".format(block, layer)
+            "block{}_d_conv{}".format(block, layer)
             for block in range(1, pretrain + 1)
             for layer in range(1, 3)
         ]
