@@ -44,16 +44,14 @@ class WriteLog(Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         self.logger.info(
-            "Epoch: {:5d}:\t".format(epoch + 1) +
-            "loss: {:7.4f}, acc: {:1.4f}, val_loss: {:7.4f}, val_acc: {:1.4f}".format(
-                logs["loss"], logs["acc"], logs["val_loss"], logs["val_acc"])
+            "Epoch: %5d:\tloss: %7.4f, acc: %1.4f, val_loss: %7.4f, val_acc: %1.4f",
+            epoch + 1, logs["loss"], logs["acc"], logs["val_loss"], logs["val_acc"]
         )
         new_lr = K.get_value(self.model.optimizer.lr)
         if self.old_lr > new_lr:
             self.logger.info(
-                "Learning rate reduced from {:1.7f} to {:1.7f}".format(
-                    self.old_lr, new_lr
-                )
+                "Learning rate reduced from %1.7f to %1.7f",
+                self.old_lr, new_lr
             )
             self.old_lr = new_lr
 
