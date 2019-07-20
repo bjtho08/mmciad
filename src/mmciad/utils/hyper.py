@@ -7,12 +7,13 @@ from collections import OrderedDict
 
 from keras.callbacks import EarlyStopping, ReduceLROnPlateau, TensorBoard
 from keras.losses import categorical_crossentropy
+#from keras_contrib.callbacks import DeadReluDetector
 from keras.optimizers import (SGD, Adadelta, Adagrad, Adam, Adamax, Nadam,
                               RMSprop)
 from keras_tqdm import TQDMNotebookCallback
 from sklearn.metrics import accuracy_score
 
-from mmciad.utils.callbacks import PatchedModelCheckpoint, WriteLog
+from mmciad.utils.callbacks import PatchedModelCheckpoint, WriteLog, DeadReluDetector
 
 from .custom_loss import categorical_focal_loss, tversky_loss, weighted_loss
 from .u_net import u_net
@@ -172,6 +173,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 metrics=["acc"],
                 #weighted_metrics=["acc"],
             )
+            
 
             history = model.fit_generator(
                 generator=train_generator,
@@ -183,6 +185,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 verbose=internal_params["verbose"],
                 callbacks=[
                     WriteLog(internal_params),
+                    #DeadReluDetector(x_train=train_generator),
                     TQDMNotebookCallback(
                         metric_format="{name}: {value:0.4f}",
                         leave_inner=True,
@@ -202,7 +205,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
             )
 
             pretrain_layers = [
-                "block{}_conv{}".format(block, layer)
+                "block{}_d_conv{}".format(block, layer)
                 for block in range(1, internal_params["pretrain"] + 1)
                 for layer in range(1, 3)
             ]
@@ -228,6 +231,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 verbose=internal_params["verbose"],
                 callbacks=[
                     WriteLog(internal_params),
+                    #DeadReluDetector(x_train=train_generator),
                     TQDMNotebookCallback(
                         metric_format="{name}: {value:0.4f}",
                         leave_inner=True,
@@ -291,6 +295,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 verbose=internal_params["verbose"],
                 callbacks=[
                     WriteLog(internal_params),
+                    #DeadReluDetector(x_train=train_generator),
                     TQDMNotebookCallback(
                         metric_format="{name}: {value:0.4f}",
                         leave_inner=True,

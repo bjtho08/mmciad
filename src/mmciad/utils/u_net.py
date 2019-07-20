@@ -212,7 +212,7 @@ def u_net(
         )
         w = []
         pretrain_layers = [
-            "block{}_d_conv{}".format(block, layer)
+            "block{}_conv{}".format(block, layer)
             for block in range(1, pretrain + 1)
             for layer in range(1, 3)
         ]
@@ -221,6 +221,7 @@ def u_net(
         del pretrained_model
         new_model = Model(inputs=i, outputs=o)
         for i, n in enumerate(pretrain_layers):
+            n.replace("_", "_d_")
             new_model.get_layer(name=n).set_weights(w[i])
             new_model.get_layer(name=n).trainable = False
         return new_model
