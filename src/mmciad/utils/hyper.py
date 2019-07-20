@@ -102,7 +102,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
             class_weights = [1 if k != 12 else 0 for k in cls_wgts.keys()]
         else:
             class_weights = ([v for v in cls_wgts.values()],)
-        
+
         depth = 4
         if str(internal_params["pretrain"]) in "enable resnet":
             internal_params["resnet"] = True
