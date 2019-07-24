@@ -11,7 +11,7 @@ from keras.losses import categorical_crossentropy
 from keras.optimizers import (SGD, Adadelta, Adagrad, Adam, Adamax, Nadam,
                               RMSprop)
 from keras_tqdm import TQDMNotebookCallback
-from sklearn.metrics import accuracy_score
+from sklearn.metrics.scorer import accuracy_score
 
 from mmciad.utils.callbacks import PatchedModelCheckpoint, WriteLog, DeadReluDetector
 
@@ -173,7 +173,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 metrics=["acc"],
                 #weighted_metrics=["acc"],
             )
-            
+
 
             history = model.fit_generator(
                 generator=train_generator,

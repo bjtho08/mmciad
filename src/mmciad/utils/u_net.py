@@ -12,6 +12,7 @@ from keras.layers import (
     Activation,
     Concatenate,
     Conv2D,
+    Conv2DTranspose,
     MaxPooling2D,
     UpSampling2D,
     GaussianNoise,
@@ -21,7 +22,7 @@ from keras.layers import (
 )
 
 def _shortcut(input_: Layer, residual):
-    input_shape = K.int_shape(input_)
+    #input_shape = K.int_shape(input_)
     residual_shape = K.int_shape(residual)
     #stride_width = int(round(input_shape[1] / residual_shape[1]))
     #stride_height = int(round(input_shape[2] / residual_shape[2]))
@@ -48,28 +49,28 @@ def batchnorm_activate(m, level, acti, iter_):
     return n
 
 def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, do=0):
-    n = batchnorm_activate(m, level, acti, 1)
+    n = batchnorm_activate(m, level, acti, 1) if bn else m
     n = Conv2D(
         filters=nb_filters,
         kernel_size=1,
         padding="same",
         kernel_initializer=init,
         name="block{}_conv1".format(level))(n)
-    n = batchnorm_activate(n, level, acti, 2)
+    n = batchnorm_activate(n, level, acti, 2) if bn else n
     n = Conv2D(
         filters=nb_filters,
         kernel_size=conv_size,
         padding="same",
         kernel_initializer=init,
         name="block{}_conv2".format(level))(n)
-    n = batchnorm_activate(n, level, acti, 3)
+    n = batchnorm_activate(n, level, acti, 3) if bn else n
     n = Conv2D(
         filters=nb_filters*4,
         kernel_size=1,
         padding="same",
         kernel_initializer=init,
         name="block{}_conv3".format(level))(n)
-    n = Dropout(drop, name="block{}_drop".format(level)) if do else n
+    n = Dropout(do, name="block{}_drop".format(level)) if do else n
     return _shortcut(m, n)
 
 def conv_block(m, nb_filters, conv_size, init, acti, bn, level, do=0):
@@ -221,7 +222,7 @@ def u_net(
         del pretrained_model
         new_model = Model(inputs=i, outputs=o)
         for i, n in enumerate(pretrain_layers):
-            n.replace("_", "_d_")
+            n = n.replace("_", "_d_")
             new_model.get_layer(name=n).set_weights(w[i])
             new_model.get_layer(name=n).trainable = False
         return new_model

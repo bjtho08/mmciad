@@ -37,7 +37,7 @@ class WriteLog(Callback):
         self.logger.info("Training started")
         self.old_lr = K.get_value(self.model.optimizer.lr)
         if self.params:
-            self.logger.info("Current parameters: %s" % self.hyperparams)
+            self.logger.info("Current parameters: %s", self.hyperparams)
 
     def on_train_end(self, logs=None):
         self.logger.info("Training finished.\n\n")
@@ -138,8 +138,7 @@ class PatchedModelCheckpoint(Callback):
                         'skipping.' % (self.monitor), RuntimeWarning
                     )
                     self.logger.warning(
-                        "Can save best model only with" + 
-                        " %s available, skipping.",
+                        "Can save best model only with %s available, skipping.",
                         self.monitor
                     )
                 else:
@@ -152,9 +151,7 @@ class PatchedModelCheckpoint(Callback):
                                     current, filepath)
                             )
                         self.logger.info(
-                            "\nEpoch %5d: " 
-                            + "%s improved from %0.5f to %0.5f,"
-                            + ' saving model to %s',
+                            "\nEpoch %5d: %s improved from %0.5f to %0.5f, saving model to %s",
                             epoch + 1, self.monitor, self.best, current, filepath
                         )
                         self.best = current
@@ -262,14 +259,14 @@ class DeadReluDetector(Callback):
                        layer_weight_shape]
 
 
-    def on_epoch_end(self, epoch, logs={}):
+    def on_epoch_end(self, epoch, logs=None):
         if hasattr(self.x_train, "batch_size"):
             dim = self.x_train.dim
             batches = len(self.x_train)
             total = batches * self.x_train.batch_size
             train = []
             for batch in range(batches):
-                x, y = self.x_train[batch]
+                x, _ = self.x_train[batch]
                 train.extend(x)
             self.x_train = np.asarray(train)
 
@@ -312,5 +309,3 @@ class DeadReluDetector(Callback):
                                                                 dead_neurons,
                                                                 dead_neurons_share)
                 print(str_warning)
-        if generator:
-            self.x_train = None
