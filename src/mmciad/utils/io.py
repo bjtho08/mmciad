@@ -6,7 +6,7 @@ from glob import glob
 import numpy as np
 from skimage.io import imread, imsave
 from keras.utils import to_categorical
-from .aux_tools import calculate_stats
+from .preprocessing import calculate_stats
 
 
 def read_samples(path, colors, prefix="train", n_samples=None, num_cls=None):
@@ -44,20 +44,9 @@ def read_samples(path, colors, prefix="train", n_samples=None, num_cls=None):
     ]
     means, stds = calculate_stats(X_samples)
     for i in range(num_img):
-        for c in range(3):
-            X_samples[i][..., c] = (X_samples[i][..., c] - means[c]) / stds[c]
+        X_samples[i] = (X_samples[i] - means) / stds
     Y_samples = np.asarray([imread(Y_files[i])[:, :, :3] for i in range(num_img)])
-    Y_class = [
-        np.expand_dims(np.zeros(Y_samples[i].shape[:2]), axis=-1)
-        for i in range(num_img)
-    ]
-    for i in range(num_img):
-        for cls_ in range(colors.shape[0]):
-            color = colors[cls_, :]
-            Y_class[i] += np.expand_dims(
-                np.logical_and.reduce(Y_samples[i] == color, axis=-1) * cls_, axis=-1
-            )
-        Y_class[i] = to_categorical(Y_class[i], num_classes=num_cls)
+    Y_class = rgb_to_indexed(Y_samples, i, num_img, colors, num_cls)
     X = []
     Y = []
     if n_samples is not None:
@@ -102,6 +91,20 @@ def read_samples(path, colors, prefix="train", n_samples=None, num_cls=None):
     X = np.asarray(X, dtype="float")
     Y = np.asarray(Y, dtype="uint8")
     return X, Y, means, stds, points
+
+def rgb_to_indexed(Y_samples, i, num_img, colors, num_cls):
+    Y_class = [
+        np.expand_dims(np.zeros(Y_samples[i].shape[:2]), axis=-1)
+        for i in range(num_img)
+    ]
+    for i in range(num_img):
+        for cls_ in range(colors.shape[0]):
+            color = colors[cls_, :]
+            Y_class[i] += np.expand_dims(
+                np.logical_and.reduce(Y_samples[i] == color, axis=-1) * cls_, axis=-1
+            )
+        Y_class[i] = to_categorical(Y_class[i], num_classes=num_cls)
+    return Y_class
 
 
 def create_samples(path, bg_color, ignore_color, prefix="train"):
@@ -214,16 +217,16 @@ def load_slides(path, prefix="N8b", m=None, s=None, load_gt=True, num_cls=None):
         raise ValueError("Required input missing: num_cls")
     ftype = "*.tif"
     if m is None:
-        m = [0.0, 0.0, 0.0]
+        m = np.array([[[[0.0, 0.0, 0.0]]]])
     if s is None:
-        s = [1.0, 1.0, 1.0]
+        s = np.array([[[[1.0, 1.0, 1.0]]]])
     X_files = glob(join(path, prefix + ftype))
     X = np.asarray(
         [imread(X_files[i]).astype("float") / 255.0 for i in range(len(X_files))]
     )
     for i in range(len(X)):
         for c in range(3):
-            X[i][..., c] = (X[i][..., c] - m[c]) / s[c]
+            X[i] = (X[i] - m) / s
     if load_gt:
         Y_files = glob(join(path, prefix, "*.png"))
         Y_samples = imread(Y_files[0])[:, :, :3]
@@ -259,8 +262,7 @@ def load_slides_as_dict(
     }
     if m is not None and s is not None:
         for i in X.keys():
-            for c in range(3):
-                X[i][..., c] = (X[i][..., c] - m[c]) / s[c]
+            X[i] = (X[i] - m) / s
     if load_gt:
         Y_files = sorted(glob(join(path, prefix, "*.png")))
         Y_color = {

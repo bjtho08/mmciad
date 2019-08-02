@@ -8,20 +8,38 @@ from sklearn.utils.class_weight import compute_class_weight
 from imgaug import augmenters as iaa
 from keras.utils import to_categorical
 
-def calculate_stats(path, prefix='train'):
+def calculate_stats(X=None, path=None, prefix='train', local=True):
+    """Calculate mean and standard deviation for input image dataset,
+    either local (per channel, default) or global (all channels).
+    
+    :param X: data structure containing image arrays
+    :type X: list of array-like
+    :param path: path to folder containing the dataset, defaults to
+    None. If path is specified, param X will not be used.
+    :type path: str, optinoal
+    :param prefix: filename prefix, defaults to 'train'
+    :type prefix: str, optional
+    :param local: determines statistics are calculated per channel or 
+    not, defaults to True
+    :type local: bool, optional
+    :return: calculated statistics. if local is True, the function
+    returns two lists of ints, otherwise two ints
+    :rtype: lists or ints
+    """
     if isinstance(path, str):
         X_files = glob(join(path, prefix+"*.tif"))
         X = [imread(i).reshape(-1, imread(i).shape[-1]).astype('float')/255. for i in X_files]
-    if isinstance(path, list):
-        X = path
-    means = [0]*3
-    stds = [0]*3
-    sums = [None]*3
-    for c in range(3):
-        sums[c] = np.ravel(np.vstack(X)[..., c])
-        means[c] = sums[c].mean()
-        stds[c] = sums[c].std()
-    return means, stds
+    X = np.stack(X)
+    if local:
+        means = [0]*3
+        stds = [0]*3
+        means, stds = (sums.mean(axis=(-2,-3), keepdims=True),
+                       sums.std(axis=(-2,-3), keepdims=True))
+        return means, stds
+    if not local:
+        mean, std = (sums.mean(axis=(-1,-2,-3), keepdims=True),
+                     sums.std(axis=(-1,-2,-3), keepdims=True))
+        return mean, std
 
 
 def augmentor(img, segmap):

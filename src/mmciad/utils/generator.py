@@ -5,7 +5,7 @@ from glob import glob
 import numpy as np
 from skimage.io import imread
 from keras.utils import Sequence, to_categorical
-from .aux_tools import augmentor
+from .preprocessing import augmentor
 
 
 class DataGenerator(Sequence):
@@ -82,9 +82,8 @@ class DataGenerator(Sequence):
         # Generate data
         for i, ID in enumerate(list_IDs_temp):
             # Store sample
-            X[i,] = imread(self.path + ID + ".tif").astype("float")
-            for c in range(self.n_channels):
-                X[i, ..., c] = (X[i, ..., c] - self.means[c]) / self.stds[c]
+            X[i] = imread(self.path + ID + ".tif").astype("float")
+            X[i] = (X[i] - self.means) / self.stds
             # Store class
             y[i,] = imread(self.path + "gt/" + ID + ".tif").astype("int64")
             for cls_ in range(self.n_classes):
