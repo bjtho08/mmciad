@@ -5,8 +5,8 @@ from keras import backend as K
 from keras.models import Model
 from keras.layers.advanced_activations import LeakyReLU
 from keras.activations import relu
-from keras.layers.merge import add
 from keras.layers import (
+    add,
     Layer,
     Input,
     Activation,
@@ -21,57 +21,55 @@ from keras.layers import (
     
 )
 
-def _shortcut(input_: Layer, residual):
+def _shortcut(input_: Layer, residual: Layer, strides=1):
     #input_shape = K.int_shape(input_)
     residual_shape = K.int_shape(residual)
     #stride_width = int(round(input_shape[1] / residual_shape[1]))
     #stride_height = int(round(input_shape[2] / residual_shape[2]))
     #equal_channels = input_shape[3] == residual_shape[3]
     shortcut = input_
-    #if stride_height > 1 or stride_width > 1 or not equal_channels:
-    #print("input:")
-    #print("name: '{}', shape: {}".format(input_.name, input_shape))
-    #print("residual:")
-    #print("name: '{}', shape: {}".format(residual.name, residual_shape))
+    sc_base_name = "_".join(residual.name.split("_")[:2])
     shortcut = Conv2D(
         filters=residual_shape[3],
         kernel_size=1,
-        strides=(1, 1),
+        strides=strides,
         padding="same",
         kernel_initializer="he_normal",
-        name="shortcut_{}".format("_".join(residual.name.split("_")[:2])))(shortcut)
-    return add([shortcut, residual], name="add_{}".format("_".join(residual.name.split("_")[:2])))
+        name="shortcut_{}".format(sc_base_name))(shortcut)
+    return add([residual, shortcut], name="add_{}".format(sc_base_name))
 
 
 def batchnorm_activate(m, bn, level, acti, iter_):
     n = BatchNormalization(name="block{}_bn{}".format(level, iter_))(m) if bn else m
-    n = Activation(acti, name="block{}_activation{}".format(level, iter_))(n)
+    n = Activation(acti, name="block{}_{}{}".format(level, acti, iter_))(n)
     return n
 
-def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, do=0):
+def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, strides=1, do=0):
+    conv_base_name = "block{}_conv{}"
     n = batchnorm_activate(m, bn, level, acti, 1)
     n = Conv2D(
         filters=nb_filters,
         kernel_size=1,
         padding="same",
         kernel_initializer=init,
-        name="block{}_conv1".format(level))(n)
+        name=conv_base_name.format(level, 1))(n)
     n = batchnorm_activate(n, bn, level, acti, 2)
     n = Conv2D(
         filters=nb_filters,
         kernel_size=conv_size,
         padding="same",
         kernel_initializer=init,
-        name="block{}_conv2".format(level))(n)
+        name=conv_base_name.format(level, 2))(n)
     n = batchnorm_activate(n, bn, level, acti, 3)
     n = Conv2D(
         filters=nb_filters*4,
         kernel_size=1,
+        strides=strides,
         padding="same",
         kernel_initializer=init,
-        name="block{}_conv3".format(level))(n)
+        name=conv_base_name.format(level, 3))(n)
     n = Dropout(do, name="block{}_drop".format(level)) if do else n
-    return _shortcut(m, n)
+    return _shortcut(m, n, strides=strides)
 
 def conv_block(m, nb_filters, conv_size, init, acti, bn, level, do=0):
     n = Conv2D(
@@ -103,8 +101,11 @@ def level_block(
         block = bottleneck
     else:
         block = conv_block
+    strides=1
+    if level > 2:
+        strides=2
     if depth > 0:
-        n = block(m, nb_filters, conv_size, init, acti, bn, str(level) + '_d')
+        n = block(m, nb_filters, conv_size, init, acti, bn, str(level) + '_d', strides=strides)
         m = (
             MaxPooling2D(pool_size=(2, 2), name="block{}_d_MaxPool".format(level))(n)
             if mp
