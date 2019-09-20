@@ -17,6 +17,8 @@ class DataGenerator(Sequence):
         colorvec,
         means,
         stds,
+        x_min,
+        x_max,
         list_IDs=None,
         batch_size=32,
         dim=(208, 208),
@@ -31,6 +33,8 @@ class DataGenerator(Sequence):
         self.colorvec = colorvec
         self.means = means
         self.stds = stds
+        self.x_min = x_min
+        self.x_max = x_max
         self.batch_size = batch_size
         self.list_IDs = list_IDs
         self.n_channels = n_channels
@@ -84,6 +88,7 @@ class DataGenerator(Sequence):
             # Store sample
             X[i] = imread(self.path + ID + ".tif").astype("float")
             X[i] = (X[i] - self.means) / self.stds
+            X[i] = (X[i] - self.x_min)/(self.x_max - self.x_min)
             # Store class
             y[i,] = imread(self.path + "gt/" + ID + ".tif").astype("int64")
             for cls_ in range(self.n_classes):

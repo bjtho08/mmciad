@@ -5,15 +5,17 @@ import os
 import os.path as osp
 from collections import OrderedDict
 
-from keras.callbacks import EarlyStopping, ReduceLROnPlateau, TensorBoard
+from keras.callbacks import EarlyStopping, ReduceLROnPlateau, TensorBoard, CSVLogger
 from keras.losses import categorical_crossentropy
-#from keras_contrib.callbacks import DeadReluDetector
-from keras.optimizers import (SGD, Adadelta, Adagrad, Adam, Adamax, Nadam,
-                              RMSprop)
-from keras_tqdm import TQDMNotebookCallback
-from sklearn.metrics.scorer import accuracy_score
 
-from mmciad.utils.callbacks import PatchedModelCheckpoint, WriteLog, DeadReluDetector
+# from keras_contrib.callbacks import DeadReluDetector
+#from keras.optimizers import SGD, Adadelta, Adagrad, Adam, Adamax, Nadam, RMSprop
+from keras_tqdm import TQDMNotebookCallback
+#from keras_radam import RAdam
+
+# from sklearn.metrics.scorer import accuracy_score
+
+from mmciad.utils.callbacks import PatchedModelCheckpoint#, DeadReluDetector
 
 from .custom_loss import categorical_focal_loss, tversky_loss, weighted_loss
 from .u_net import u_net
@@ -30,16 +32,18 @@ VERBOSE = 0
 
 # ****  train
 
+
 def value_as_string(input_dict):
     output_dict = {}
     for key, val in input_dict.items():
-        if hasattr(val, '__name__'):
+        if hasattr(val, "__name__"):
             output_dict[key] = val.__name__
         elif isinstance(val, str):
             output_dict[key] = val
         else:
             output_dict[key] = str(val)
     return output_dict
+
 
 def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_generator):
     """Initialize a talos model object for hyper-parameter search
@@ -76,6 +80,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
         internal_params = OrderedDict()
         internal_params.update(static_params)
         internal_params.update(talos_params)
+        path_elements = ['{}_{}'.format(key, val) for key, val in talos_params.items()]
         if internal_params["loss_func"] == "cat_CE":
             loss_func = categorical_crossentropy
         elif internal_params["loss_func"] == "cat_FL":
@@ -83,7 +88,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
             loss_func = cat_focal_loss
         elif internal_params["loss_func"] in globals():
             loss_func = globals()[internal_params["loss_func"]]
-        elif hasattr(internal_params["loss_func"], '__call__'):
+        elif hasattr(internal_params["loss_func"], "__call__"):
             loss_func = internal_params["loss_func"]
         elif internal_params["loss_func"] == "w_cat_CE":
             loss_func = weighted_loss(categorical_crossentropy, cls_wgts)
@@ -103,105 +108,100 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
         else:
             class_weights = ([v for v in cls_wgts.values()],)
 
-        depth = 4
         if str(internal_params["pretrain"]) in "enable resnet":
             internal_params["resnet"] = True
+            internal_params["maxpool"] = False
             internal_params["pretrain"] = 0
             internal_params["nb_filters_0"] = 32
-            depth = 3
+            internal_params["depth"] = 3
 
         param_strings = value_as_string(internal_params)
         model_base_path = osp.join(
             weight_path,
             internal_params["today_str"],
-            "{} {}".format(
-                param_strings["loss_func"],
-                param_strings["opt"],
-            ))
+            "{} {}".format(param_strings["loss_func"], param_strings["opt"]),
+        )
 
         if not os.path.exists(model_base_path):
             os.makedirs(model_base_path, exist_ok=True)
 
         modelpath = osp.join(
-            model_base_path,
-            "talos_U-net_model-"
-            + "init_{}-act_{}-decay_{}-drop_{}-weights_{}-pretrain_{}-sigma_{}.h5".format(
-                param_strings["init"],
-                param_strings["act"],
-                param_strings["decay"],
-                param_strings["dropout"],
-                param_strings["class_weights"],
-                param_strings["pretrain"],
-                param_strings["sigma_noise"],
-            ),
+            model_base_path, "talos_U-net_model-" + '-'.join(path_elements) + ".h5"
         )
         log_path = (
             "./logs/"
-            + "{}/{} {}/init_{}-act_{}-decay_{}-drop_{}-weights_{}-pretrain_{}-sigma_{}/".format(
+            + "{}/{} {}/".format(
                 static_params["today_str"],
                 param_strings["loss_func"],
                 param_strings["opt"],
-                param_strings["init"],
-                param_strings["act"],
-                param_strings["decay"],
-                param_strings["dropout"],
-                param_strings["class_weights"],
-                param_strings["pretrain"],
-                param_strings["sigma_noise"],
             )
+            + osp.join(*path_elements, '')
         )
+        model_kwargs = {
+            "shape": internal_params["shape"],
+            "nb_filters": int(internal_params["nb_filters_0"]),
+            "sigma_noise": internal_params["sigma_noise"],
+            "depth": internal_params["depth"],
+            "maxpool": internal_params["maxpool"],
+            "initialization": internal_params["init"],
+            "activation": internal_params["act"],
+            "dropout": internal_params["dropout"],
+            "output_channels": internal_params["num_cls"],
+            "batchnorm": internal_params["batchnorm"],
+            "pretrain": internal_params["pretrain"],
+            "resnet": internal_params["resnet"],
+        }
+
+        csv_logger = CSVLogger("csvlog.csv", append=True)
+        tqdm_progress = TQDMNotebookCallback(
+            metric_format="{name}: {value:0.4f}", leave_inner=True, leave_outer=True
+        )
+        tb_callback = TensorBoard(
+            log_dir=log_path,
+            histogram_freq=0,
+            batch_size=internal_params["batch_size"],
+            write_graph=True,
+            write_grads=False,
+            write_images=True,
+            embeddings_freq=0,
+            update_freq="epoch",
+        )
+        early_stopping = EarlyStopping(
+            monitor="loss", min_delta=0.0001, patience=15, verbose=0, mode="auto"
+        )
+        reduce_lr_on_plateau = ReduceLROnPlateau(
+            monitor="loss", factor=0.1, patience=5, min_lr=1e-8, verbose=1
+        )
+        model_checkpoint = PatchedModelCheckpoint(
+            modelpath, verbose=0, monitor="loss", save_best_only=True
+        )
+        # logger_callback = WriteLog(internal_params)
+        # dead_relus = DeadReluDetector(x_train=train_generator)
+
+        model_callbacks = [csv_logger, tb_callback, tqdm_progress]
+        opti_callbacks = [early_stopping, reduce_lr_on_plateau, model_checkpoint]
 
         if internal_params["pretrain"] != 0:
             print(
                 "starting with frozen layers\nclass weights: {}".format(class_weights)
             )
-            model = u_net(
-                internal_params["shape"],
-                int(internal_params["nb_filters_0"]),
-                sigma_noise=internal_params["sigma_noise"],
-                depth=depth,
-                initialization=internal_params["init"],
-                activation=internal_params["act"],
-                dropout=internal_params["dropout"],
-                output_channels=internal_params["num_cls"],
-                batchnorm=internal_params["batchnorm"],
-                pretrain=internal_params["pretrain"],
-            )
+            model = u_net(**model_kwargs)
             model.compile(
                 loss=loss_func,
                 optimizer=internal_params["opt"](internal_params["lr"]),
                 metrics=["acc"],
-                #weighted_metrics=["acc"],
+                # weighted_metrics=["acc"],
             )
-
 
             history = model.fit_generator(
                 generator=train_generator,
-                epochs=10,
+                epochs=internal_params["nb_frozen"],
                 validation_data=val_generator,
                 use_multiprocessing=True,
                 workers=30,
                 class_weight=class_weights,
                 verbose=internal_params["verbose"],
-                callbacks=[
-                    WriteLog(internal_params),
-                    #DeadReluDetector(x_train=train_generator),
-                    TQDMNotebookCallback(
-                        metric_format="{name}: {value:0.4f}",
-                        leave_inner=True,
-                        leave_outer=True,
-                    ),
-                    TensorBoard(
-                        log_dir=log_path,
-                        histogram_freq=0,
-                        batch_size=internal_params["batch_size"],
-                        write_graph=True,
-                        write_grads=False,
-                        write_images=True,
-                        embeddings_freq=0,
-                        update_freq="epoch",
-                    ),
-                ],
+                callbacks=model_callbacks,
             )
 
             pretrain_layers = [
@@ -217,72 +217,29 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 loss=loss_func,
                 optimizer=internal_params["opt"](internal_params["lr"]),
                 metrics=["acc"],
-                #weighted_metrics=["acc"],
+                # weighted_metrics=["acc"],
             )
 
             history = model.fit_generator(
                 generator=train_generator,
                 epochs=internal_params["nb_epoch"],
-                initial_epoch=10,
+                initial_epoch=internal_params["nb_frozen"],
                 validation_data=val_generator,
                 use_multiprocessing=True,
                 workers=30,
                 class_weight=class_weights,
                 verbose=internal_params["verbose"],
-                callbacks=[
-                    WriteLog(internal_params),
-                    #DeadReluDetector(x_train=train_generator),
-                    TQDMNotebookCallback(
-                        metric_format="{name}: {value:0.4f}",
-                        leave_inner=True,
-                        leave_outer=True,
-                    ),
-                    TensorBoard(
-                        log_dir=log_path,
-                        histogram_freq=0,
-                        batch_size=internal_params["batch_size"],
-                        write_graph=True,
-                        write_grads=False,
-                        write_images=True,
-                        embeddings_freq=0,
-                        update_freq="epoch",
-                    ),
-                    EarlyStopping(
-                        monitor="loss",
-                        min_delta=0.0001,
-                        patience=10,
-                        verbose=0,
-                        mode="auto",
-                    ),
-                    ReduceLROnPlateau(
-                        monitor="loss", factor=0.1, patience=3, min_lr=1e-7, verbose=1
-                    ),
-                    PatchedModelCheckpoint(
-                        modelpath, verbose=0, monitor="loss", save_best_only=True
-                    ),
-                ],
+                callbacks=model_callbacks + opti_callbacks,
             )
         else:
             print("No layers frozen at start\nclass weights: {}".format(class_weights))
-            model = u_net(
-                internal_params["shape"],
-                int(internal_params["nb_filters_0"]),
-                sigma_noise=internal_params["sigma_noise"],
-                depth=depth,
-                initialization=internal_params["init"],
-                activation=internal_params["act"],
-                dropout=internal_params["dropout"],
-                output_channels=internal_params["num_cls"],
-                batchnorm=internal_params["batchnorm"],
-                pretrain=internal_params["pretrain"],
-                resnet=internal_params["resnet"],
-            )
+            model = u_net(**model_kwargs)
 
             model.compile(
                 loss=loss_func,
                 optimizer=internal_params["opt"](internal_params["lr"]),
                 metrics=["acc"],
-                #weighted_metrics=["acc"],
+                # weighted_metrics=["acc"],
             )
 
             history = model.fit_generator(
@@ -293,39 +250,8 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 workers=30,
                 class_weight=class_weights,
                 verbose=internal_params["verbose"],
-                callbacks=[
-                    WriteLog(internal_params),
-                    #DeadReluDetector(x_train=train_generator),
-                    TQDMNotebookCallback(
-                        metric_format="{name}: {value:0.4f}",
-                        leave_inner=True,
-                        leave_outer=True,
-                    ),
-                    TensorBoard(
-                        log_dir=log_path,
-                        histogram_freq=0,
-                        batch_size=internal_params["batch_size"],
-                        write_graph=True,
-                        write_grads=False,
-                        write_images=True,
-                        embeddings_freq=0,
-                        update_freq="epoch",
-                    ),
-                    EarlyStopping(
-                        monitor="loss",
-                        min_delta=0.0001,
-                        patience=10,
-                        verbose=0,
-                        mode="auto",
-                    ),
-                    ReduceLROnPlateau(
-                        monitor="loss", factor=0.1, patience=3, min_lr=1e-7, verbose=1
-                    ),
-                    PatchedModelCheckpoint(
-                        modelpath, verbose=0, monitor="loss", save_best_only=True
-                    ),
-
-                ],
+                callbacks=model_callbacks + opti_callbacks,
             )
         return history, model
+
     return talos_model

@@ -28,18 +28,23 @@ def calculate_stats(X=None, path=None, prefix='train', local=True):
     """
     if isinstance(path, str):
         X_files = glob(join(path, prefix+"*.tif"))
-        X = [imread(i).reshape(-1, imread(i).shape[-1]).astype('float')/255. for i in X_files]
-    X = np.stack(X)
+        X = [imread(i).reshape(-1, imread(i).shape[-1]).astype(np.float)/255. for i in X_files]
+    X = np.vstack(X)
+    X = X[None,None,:]
     if local:
-        means = [0]*3
-        stds = [0]*3
-        means, stds = (sums.mean(axis=(-2,-3), keepdims=True),
-                       sums.std(axis=(-2,-3), keepdims=True))
-        return means, stds
+        means, stds = (X.mean(axis=-2, keepdims=True),
+                       X.std(axis=-2, keepdims=True))
+        X_center = (X - means)/stds
+        mins = X_center.min(axis=-2, keepdims=True)
+        maxs = X_center.max(axis=-2, keepdims=True)
+        return means, stds, mins, maxs
     if not local:
-        mean, std = (sums.mean(axis=(-1,-2,-3), keepdims=True),
-                     sums.std(axis=(-1,-2,-3), keepdims=True))
-        return mean, std
+        means, stds = (X.mean(keepdims=True),
+                     X.std(keepdims=True))
+        X_center = (X - means)/stds
+        mins = X_center.min(axis=-2, keepdims=True)
+        maxs = X_center.max(axis=-2, keepdims=True)
+        return means, stds, mins, maxs
 
 
 def augmentor(img, segmap):

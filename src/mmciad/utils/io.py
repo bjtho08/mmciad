@@ -45,6 +45,13 @@ def read_samples(path, colors, prefix="train", n_samples=None, num_cls=None):
     means, stds = calculate_stats(X_samples)
     for i in range(num_img):
         X_samples[i] = (X_samples[i] - means) / stds
+    x_range = np.asarray(
+        [[X_samples[i].min(), X_samples[i].max()] for i in range(num_img)],
+    )
+    x_min = x_range.min()
+    x_max = x_range.max()
+    for i in range(num_img):
+        X_samples[i] = (X_samples[i] - x_min)/(x_max - x_min)
     Y_samples = np.asarray([imread(Y_files[i])[:, :, :3] for i in range(num_img)])
     Y_class = rgb_to_indexed(Y_samples, i, num_img, colors, num_cls)
     X = []
@@ -158,7 +165,7 @@ def create_samples(path, bg_color, ignore_color, prefix="train"):
                 res_y = Y_samples[i][x : x + size[0], y : y + size[1], :]
             # Check if res_y contains any pixels with the ignore label
             keep = True
-            if keep and check_class(res_y, ignore_color, probability=1):
+            if keep and check_class(res_y, ignore_color, upper_threshold=0.9):
                 keep = False
                 # Check if res_y contains enough pixels with background label
             if keep and check_class(res_y, bg_color):
@@ -212,7 +219,7 @@ def check_class(
     return False
 
 
-def load_slides(path, prefix="N8b", m=None, s=None, load_gt=True, num_cls=None):
+def load_slides(path, colorvec: list, prefix="N8b", m=None, s=None, load_gt=True, num_cls=None):
     if load_gt and num_cls is None:
         raise ValueError("Required input missing: num_cls")
     ftype = "*.tif"
@@ -225,8 +232,10 @@ def load_slides(path, prefix="N8b", m=None, s=None, load_gt=True, num_cls=None):
         [imread(X_files[i]).astype("float") / 255.0 for i in range(len(X_files))]
     )
     for i in range(len(X)):
-        for c in range(3):
-            X[i] = (X[i] - m) / s
+        X[i] = (X[i] - m) / s
+        x_min = X[i].min()
+        x_max = X[i].max()
+        X[i] = (X[i] - x_min)/(x_max - x_min)
     if load_gt:
         Y_files = glob(join(path, prefix, "*.png"))
         Y_samples = imread(Y_files[0])[:, :, :3]
@@ -242,7 +251,7 @@ def load_slides(path, prefix="N8b", m=None, s=None, load_gt=True, num_cls=None):
 
 
 def load_slides_as_dict(
-    path, prefix="N8b", m=None, s=None, load_gt=True, num_cls=None, colors=None
+    path, prefix="N8b", m=None, s=None, x_minmax=None, load_gt=True, num_cls=None, colors=None
 ):
     if load_gt and num_cls is None:
         raise ValueError("Required input missing: num_cls")
@@ -263,6 +272,10 @@ def load_slides_as_dict(
     if m is not None and s is not None:
         for i in X.keys():
             X[i] = (X[i] - m) / s
+        x_min = x_minmax[0]
+        x_max = x_minmax[1]
+        for i in X.keys():
+            X[i] = (X[i] - x_min)/(x_max - x_min)
     if load_gt:
         Y_files = sorted(glob(join(path, prefix, "*.png")))
         Y_color = {

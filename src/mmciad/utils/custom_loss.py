@@ -1,5 +1,7 @@
-import numpy as np
-from keras.losses import categorical_crossentropy
+"""Custom loss functions
+
+"""
+#from keras.losses import categorical_crossentropy
 from keras import backend as K
 import tensorflow as tf
 
@@ -12,6 +14,17 @@ SMOOTH = 1.0
 
 
 def dice1_coef(y_true, y_pred, smooth=SMOOTH):
+    """Dice coefficient
+
+    :param y_true: true label
+    :type y_true: int
+    :param y_pred: predicted label
+    :type y_pred: int or float
+    :param smooth: smoothing parameter, defaults to SMOOTH
+    :type smooth: float, optional
+    :return: Dice coefficient
+    :rtype: float
+    """
     y_true_f = K.flatten(y_true)
     y_pred_f = K.flatten(y_pred)
     intersection = K.sum(y_true_f * y_pred_f)
@@ -19,10 +32,32 @@ def dice1_coef(y_true, y_pred, smooth=SMOOTH):
 
 
 def dice1_loss(y_true, y_pred, smooth=SMOOTH):
+    """Dice Loss function
+
+    :param y_true: true label
+    :type y_true: int
+    :param y_pred: predicted label
+    :type y_pred: int or float
+    :param smooth: smoothing parameter, defaults to SMOOTH
+    :type smooth: float, optional
+    :return: Dice loss
+    :rtype: float
+    """
     return 1 - dice1_coef(y_true, y_pred, smooth)
 
 
 def dice2_coef(y_true, y_pred, smooth=SMOOTH):
+    """Dice-squared coefficient.
+
+    :param y_true: true label
+    :type y_true: int
+    :param y_pred: predicted label
+    :type y_pred: int or float
+    :param smooth: smoothing parameter, defaults to SMOOTH
+    :type smooth: float, optional
+    :return: Dice-squared coefficient
+    :rtype: float
+    """
     y_true_f = K.flatten(y_true)
     y_pred_f = K.flatten(y_pred)
     intersection = K.sum(y_true_f * y_pred_f)
@@ -32,10 +67,32 @@ def dice2_coef(y_true, y_pred, smooth=SMOOTH):
 
 
 def dice2_loss(y_true, y_pred, smooth=SMOOTH):
+    """Dice-squared loss.
+
+    :param y_true: true label
+    :type y_true: int
+    :param y_pred: predicted label
+    :type y_pred: int or float
+    :param smooth: smoothing parameter, defaults to SMOOTH
+    :type smooth: float, optional
+    :return: Dice-squared loss
+    :rtype: float
+    """
     return 1 - dice2_coef(y_true, y_pred, smooth)
 
 
 def jaccard2_coef(y_true, y_pred, smooth=SMOOTH):
+    """Jaccard index coefficient
+
+    :param y_true: true label
+    :type y_true: int
+    :param y_pred: predicted label
+    :type y_pred: int or float
+    :param smooth: smoothing parameter, defaults to SMOOTH
+    :type smooth: float, optional
+    :return: Jaccard coefficient
+    :rtype: float
+    """
     y_true_f = K.flatten(y_true)
     y_pred_f = K.flatten(y_pred)
     intersection = K.sum(y_true_f * y_pred_f)
@@ -44,10 +101,32 @@ def jaccard2_coef(y_true, y_pred, smooth=SMOOTH):
 
 
 def jaccard2_loss(y_true, y_pred, smooth=SMOOTH):
+    """Jaccard loss
+
+    :param y_true: true label
+    :type y_true: int
+    :param y_pred: predicted label
+    :type y_pred: int or float
+    :param smooth: smoothing parameter, defaults to SMOOTH
+    :type smooth: float, optional
+    :return: Jaccard loss
+    :rtype: float
+    """
     return 1 - jaccard2_coef(y_true, y_pred, smooth)
 
 
 def jaccard1_coef(y_true, y_pred, smooth=SMOOTH):
+    """Jaccard index coefficient
+
+    :param y_true: true label
+    :type y_true: int
+    :param y_pred: predicted label
+    :type y_pred: int or float
+    :param smooth: smoothing parameter, defaults to SMOOTH
+    :type smooth: float, optional
+    :return: Jaccard coefficient
+    :rtype: float
+    """
     y_true_f = K.flatten(y_true)
     y_pred_f = K.flatten(y_pred)
     intersection = K.sum(y_true_f * y_pred_f)
@@ -56,6 +135,17 @@ def jaccard1_coef(y_true, y_pred, smooth=SMOOTH):
 
 
 def jaccard1_loss(y_true, y_pred, smooth=SMOOTH):
+    """Jaccard loss
+
+    :param y_true: true label
+    :type y_true: int
+    :param y_pred: predicted label
+    :type y_pred: int or float
+    :param smooth: smoothing parameter, defaults to SMOOTH
+    :type smooth: float, optional
+    :return: Jaccard loss
+    :rtype: float
+    """
     return 1 - jaccard1_coef(y_true, y_pred, smooth=smooth)
 
 
@@ -127,6 +217,15 @@ def tversky_loss(y_true, y_pred, alpha=0.3, beta=0.7, smooth=1e-10):
 
 
 def weighted_loss(original_loss_func, weights_list):
+    """create weighted loss function from unweighted.
+
+    :param original_loss_func: unweighted loss function
+    :type original_loss_func: function
+    :param weights_list: list of class weights
+    :type weights_list: list
+    :return: weighted loss function
+    :rtype: function
+    """
     def loss_func(y_true, y_pred):
         axis = -1  # if channels last
         # axis=  1 #if channels first
@@ -223,7 +322,8 @@ def categorical_focal_loss(gamma=2.0, alpha=0.25):
         Official paper: https://arxiv.org/pdf/1708.02002.pdf
         https://www.tensorflow.org/api_docs/python/tf/keras/backend/categorical_crossentropy
     Usage:
-     model.compile(loss=[categorical_focal_loss(alpha=.25, gamma=2)], metrics=["accuracy"], optimizer=adam)
+     model.compile(loss=[categorical_focal_loss(alpha=.25, gamma=2)],
+                   metrics=["accuracy"], optimizer=adam)
     """
 
     def categorical_focal_loss_fixed(y_true, y_pred):
@@ -253,7 +353,8 @@ def categorical_focal_loss(gamma=2.0, alpha=0.25):
 
 
 def get_weighted_categorical_crossentropy(weights):
-    """L = - \sum_i weights[i] y_true[i] \log(y_pred[i])
+    r"""L = - \sum_i weights[i] y_true[i] \log(y_pred[i])
+
     :param weights: a list of weights for each class.
     :return: loss function.
     """
