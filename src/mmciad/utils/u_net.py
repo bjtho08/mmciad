@@ -6,7 +6,7 @@ from keras.models import Model
 
 # from keras.layers.advanced_activations import LeakyReLU
 #from keras.activations import relu
-#from keras.layers.advanced_activations import ReLU
+from keras.layers.advanced_activations import ReLU
 #from keras_contrib.layers.advanced_activations import swish
 from keras.layers import (
     add,
@@ -182,7 +182,7 @@ def u_net(
     initialization="glorot_uniform",
     depth=4,
     inc_rate=2.0,
-    activation="relu",
+    activation=ReLU,
     dropout=0,
     output_channels=5,
     batchnorm=True,
@@ -190,7 +190,7 @@ def u_net(
     upconv=True,
     pretrain=0,
     sigma_noise=0,
-    resnet=False,
+    arch="U-Net",
 ):
     """U-Net model.
 
@@ -223,6 +223,11 @@ def u_net(
     https://github.com/jocicmarko/ultrasound-nerve-segmentation
     by Marko Jocic
     """
+    resnet = False
+    if arch.lower() not in ["u-resnet", "u-net"]:
+        raise ValueError("Wrong architecture ")
+    if arch.lower() == "u-resnet":
+        resnet = True
     i = Input(shape, name="input_layer")
     m = (
         Conv2D(
