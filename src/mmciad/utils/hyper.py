@@ -80,7 +80,12 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
         internal_params = OrderedDict()
         internal_params.update(static_params)
         internal_params.update(talos_params)
-        path_elements = ['{}_{}'.format(key, val) for key, val in talos_params.items()]
+        path_elements = [
+            '{}_{}'.format(key, val.__name__)
+            if hasattr(val, '__name__')
+            else '{}_{}'.format(key, val) for key, val in talos_params.items()
+        ]
+        path_elements.remove('{}_{}'.format("arch", talos_params["arch"]))
         if internal_params["loss_func"] == "cat_CE":
             loss_func = categorical_crossentropy
         elif internal_params["loss_func"] == "cat_FL":
@@ -108,17 +113,17 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
         else:
             class_weights = ([v for v in cls_wgts.values()],)
 
-        if str(internal_params["pretrain"]) in "enable resnet":
-            internal_params["resnet"] = True
+        if str(internal_params["arch"]).lower() == "u-resnet":
             internal_params["maxpool"] = False
-            internal_params["pretrain"] = 0
-            internal_params["nb_filters_0"] = 32
-            internal_params["depth"] = 3
+            #internal_params["pretrain"] = 0
+            #internal_params["nb_filters_0"] = 32
+            #internal_params["depth"] = 3
 
         param_strings = value_as_string(internal_params)
         model_base_path = osp.join(
             weight_path,
             internal_params["today_str"],
+            internal_params["arch"],
             "{} {}".format(param_strings["loss_func"], param_strings["opt"]),
         )
 
@@ -128,14 +133,12 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
         modelpath = osp.join(
             model_base_path, "talos_U-net_model-" + '-'.join(path_elements) + ".h5"
         )
-        log_path = (
-            "./logs/"
-            + "{}/{} {}/".format(
-                static_params["today_str"],
-                param_strings["loss_func"],
-                param_strings["opt"],
-            )
-            + osp.join(*path_elements, '')
+        log_path = osp.join(
+            "./logs",
+            static_params["today_str"],
+            internal_params["arch"],
+            "{} {}".format(param_strings["loss_func"], param_strings["opt"]),
+            *path_elements, ''
         )
         model_kwargs = {
             "shape": internal_params["shape"],
