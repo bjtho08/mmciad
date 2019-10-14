@@ -5,8 +5,8 @@ import os
 import os.path as osp
 from collections import OrderedDict
 
-from keras.callbacks import EarlyStopping, ReduceLROnPlateau, TensorBoard, CSVLogger
-from keras.losses import categorical_crossentropy
+from tensorflow.python.keras.callbacks import EarlyStopping, ReduceLROnPlateau, TensorBoard, CSVLogger
+from tensorflow.python.keras.losses import categorical_crossentropy
 
 # from keras_contrib.callbacks import DeadReluDetector
 #from keras.optimizers import SGD, Adadelta, Adagrad, Adam, Adamax, Nadam, RMSprop
@@ -45,7 +45,7 @@ def value_as_string(input_dict):
     return output_dict
 
 
-def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_generator):
+def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_generator, notebook=True):
     """Initialize a talos model object for hyper-parameter search
 
     :param weight_path: Path to the base weight folder
@@ -152,13 +152,14 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
             "output_channels": internal_params["num_cls"],
             "batchnorm": internal_params["batchnorm"],
             "pretrain": internal_params["pretrain"],
-            "resnet": internal_params["resnet"],
+            "arch": internal_params["arch"],
         }
 
         csv_logger = CSVLogger("csvlog.csv", append=True)
-        tqdm_progress = TQDMNotebookCallback(
-            metric_format="{name}: {value:0.4f}", leave_inner=True, leave_outer=True
-        )
+        if notebook:
+            tqdm_progress = TQDMNotebookCallback(
+                metric_format="{name}: {value:0.4f}", leave_inner=True, leave_outer=True
+            )
         tb_callback = TensorBoard(
             log_dir=log_path,
             histogram_freq=0,
@@ -181,7 +182,9 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
         # logger_callback = WriteLog(internal_params)
         # dead_relus = DeadReluDetector(x_train=train_generator)
 
-        model_callbacks = [csv_logger, tb_callback, tqdm_progress]
+        model_callbacks = [csv_logger, tb_callback]
+        if notebook:
+            model_callbacks.append(tqdm_progress)
         opti_callbacks = [early_stopping, reduce_lr_on_plateau, model_checkpoint]
 
         if internal_params["pretrain"] != 0:
@@ -215,7 +218,8 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
             for n in pretrain_layers:
                 model.get_layer(name=n).trainable = True
             print("layers unfrozen\n")
-
+            model.save()
+            keras.models.load_model
             model.compile(
                 loss=loss_func,
                 optimizer=internal_params["opt"](internal_params["lr"]),

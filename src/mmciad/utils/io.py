@@ -5,7 +5,7 @@ from os.path import join, split, splitext
 from glob import glob
 import numpy as np
 from skimage.io import imread, imsave
-from keras.utils import to_categorical
+from tensorflow.python.keras.utils import to_categorical
 from .preprocessing import calculate_stats
 
 

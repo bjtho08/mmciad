@@ -7,8 +7,8 @@ from logging.handlers import RotatingFileHandler
 from time import sleep
 
 import numpy as np
-from keras import backend as K
-from keras.callbacks import Callback
+from tensorflow.python.keras import backend as K
+from tensorflow.python.keras.callbacks import Callback
 
 
 class WriteLog(Callback):
@@ -164,7 +164,7 @@ class PatchedModelCheckpoint(Callback):
                                 else:
                                     self.model.save(filepath, overwrite=True)
                                 saved_correctly = True
-                            except Exception as error:
+                            except OSError as error:
                                 print('Error while trying to save the model: {}.\nTrying again...'.format(error))
                                 sleep(5)
                     else:

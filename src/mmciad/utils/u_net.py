@@ -1,14 +1,13 @@
 """U-Net model implementation with keras"""
 
-import keras
-from keras import backend as K
-from keras.models import Model
-
+from tensorflow.python import keras
+from tensorflow.python.keras import backend as K
+from tensorflow.python.keras.models import Model
 # from keras.layers.advanced_activations import LeakyReLU
 #from keras.activations import relu
-from keras.layers.advanced_activations import ReLU
+from tensorflow.python.keras.layers.advanced_activations import ReLU
 #from keras_contrib.layers.advanced_activations import swish
-from keras.layers import (
+from tensorflow.python.keras.layers import (
     add,
     Layer,
     Input,
@@ -22,7 +21,6 @@ from keras.layers import (
     Dropout,
     BatchNormalization,
 )
-
 
 def _shortcut(input_: Layer, residual: Layer):
     # input_shape = K.int_shape(input_)
