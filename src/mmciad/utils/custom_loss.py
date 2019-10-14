@@ -2,7 +2,7 @@
 
 """
 #from keras.losses import categorical_crossentropy
-from tensorflow.python.keras import backend as K
+from tensorflow.keras import backend as K
 import tensorflow as tf
 
 # import pdb

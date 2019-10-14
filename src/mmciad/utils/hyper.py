@@ -5,8 +5,8 @@ import os
 import os.path as osp
 from collections import OrderedDict
 
-from tensorflow.python.keras.callbacks import EarlyStopping, ReduceLROnPlateau, TensorBoard, CSVLogger
-from tensorflow.python.keras.losses import categorical_crossentropy
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, TensorBoard, CSVLogger
+from tensorflow.keras.losses import categorical_crossentropy
 
 # from keras_contrib.callbacks import DeadReluDetector
 #from keras.optimizers import SGD, Adadelta, Adagrad, Adam, Adamax, Nadam, RMSprop
