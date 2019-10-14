@@ -6,7 +6,7 @@ import numpy as np
 from skimage.io import imread
 from sklearn.utils.class_weight import compute_class_weight
 from imgaug import augmenters as iaa
-from keras.utils import to_categorical
+from tensorflow.keras.utils import to_categorical
 
 def calculate_stats(X=None, path=None, prefix='train', local=True):
     """Calculate mean and standard deviation for input image dataset,
