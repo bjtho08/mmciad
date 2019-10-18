@@ -277,7 +277,7 @@ def load_slides_as_dict(
         for i in X.keys():
             X[i] = (X[i] - x_min)/(x_max - x_min)
     if load_gt:
-        Y_files = sorted(glob(join(path, prefix, "*.png")))
+        Y_files = sorted(glob(join(path, 'gt', prefix, "*.png")))
         Y_color = {
             name: imread(path).astype("uint8")[:, :, :3]
             for name, path in zip(slide_names, Y_files)
