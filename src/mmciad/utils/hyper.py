@@ -219,8 +219,6 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
             for n in pretrain_layers:
                 model.get_layer(name=n).trainable = True
             print("layers unfrozen\n")
-            model.save()
-            keras.models.load_model
             model.compile(
                 loss=loss_func,
                 optimizer=internal_params["opt"](internal_params["lr"]),

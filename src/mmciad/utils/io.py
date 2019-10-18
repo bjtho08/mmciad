@@ -279,7 +279,7 @@ def load_slides_as_dict(
     if load_gt:
         Y_files = sorted(glob(join(path, prefix, "*.png")))
         Y_color = {
-            name: imread(path).astype("float")[:, :, :3] / 255.0
+            name: imread(path).astype("uint8")[:, :, :3]
             for name, path in zip(slide_names, Y_files)
         }
         Y_sparse = {
