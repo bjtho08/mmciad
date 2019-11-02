@@ -5,7 +5,7 @@ from glob import glob
 import numpy as np
 from skimage.io import imread
 from keras.utils import Sequence, to_categorical
-from .preprocessing import augmentor
+from .preprocessing import augmentor, merge_labels
 
 
 class DataGenerator(Sequence):
@@ -26,6 +26,7 @@ class DataGenerator(Sequence):
         n_classes=10,
         shuffle=True,
         augmenter=True,
+        remap_labels=None,
     ):
         "Initialization"
         self.dim = dim
@@ -41,6 +42,7 @@ class DataGenerator(Sequence):
         self.n_classes = n_classes
         self.shuffle = shuffle
         self.augment = augmenter
+        self.remap_labels = remap_labels
 
         if self.list_IDs is None:
             self.list_IDs = [
@@ -96,6 +98,9 @@ class DataGenerator(Sequence):
                 y_class[i] += np.expand_dims(
                     np.logical_and.reduce(y[i,] == color, axis=-1) * cls_, axis=-1
                 ).astype("uint8")
+            if isinstance(self.remap_labels, dict):
+                self.n_classes = len(self.remap_labels)
+                y_class[i] = merge_labels(y_class[i], self.remap_labels)
             y_class[i] = to_categorical(y_class[i], num_classes=self.n_classes)
         if self.augment:
             X, y = augmentor(X, y_class)

@@ -1,12 +1,16 @@
 """Input-Output module. Helps read and write data between persistent
 and volatile memory
 """
+from os import makedirs
 from os.path import join, split, splitext
 from glob import glob
+from collections import namedtuple
 import numpy as np
 from skimage.io import imread, imsave
 from keras.utils import to_categorical
 from .preprocessing import calculate_stats
+
+Size = namedtuple("Size", ["x", "y"])
 
 
 def read_samples(path, colors, prefix="train", n_samples=None, num_cls=None):
@@ -114,10 +118,10 @@ def rgb_to_indexed(Y_samples, i, num_img, colors, num_cls):
     return Y_class
 
 
-def create_samples(path, bg_color, ignore_color, prefix="train"):
+def create_samples(path, bg_color, ignore_color, prefix="train", duplication_list=None):
     """ Read all sample slides and subdivide into square tiles. The resulting tiles are saved
     as .tif files in corresponding directories.
-    
+
     Parameters
     ----------
     path : str
@@ -132,58 +136,115 @@ def create_samples(path, bg_color, ignore_color, prefix="train"):
         Filename prefix, e.g.
         'train', 'test', 'val'
     """
-    size = (208, 208)
-    X_files = sorted(glob(join(path, prefix + "*.tif")), key=str.lower)
-    Y_files = sorted(glob(join(path, "gt", prefix + "*.png")), key=str.lower)
-    num_img = len(X_files)
-    X_samples = np.asarray(
-        [imread(X_files[i]).astype("float") / 255.0 for i in range(num_img)]
-    )
-    Y_samples = np.asarray([imread(Y_files[i])[:, :, :3] for i in range(num_img)])
-    X = []  # np.zeros(shape=(n_samples*num_img, size[0], size[1], 3), dtype="float")
-    Y = (
-        []
-    )  # np.zeros(shape=(n_samples*num_img, size[0], size[1], num_cls), dtype="uint8")
-    for i in range(num_img):
-        X_, Y_ = Y_samples[i].shape[:2]
-        px, py = np.mgrid[0:X_:160, 0:Y_:160]
-        points = np.c_[px.ravel(), py.ravel()]
-        pr = points.shape[0]
-        for n in range(pr):
-            x, y = points[n, :]
-            res_x = X_samples[i][x : x + size[0], y : y + size[1], :]
-            res_y = Y_samples[i][x : x + size[0], y : y + size[1], :]
+    size = Size(x=208, y=208)
+    makedirs(join(path, prefix, "gt", ""), exist_ok=True)
+    input_images = read_images(path, prefix)
+    target_images = read_images(path, prefix, True)
+    input_target_pairs = {
+        name: (input_image, target_images[name])
+        for name, input_image in input_images.items()
+    }
+    for name, (input_slide, target_slide) in input_target_pairs.items():
+        dim_x, dim_y = target_slide.shape[:2]
+        x_coordinates, y_coordinates = np.mgrid[0:dim_x:160, 0:dim_y:160]
+        points = np.c_[x_coordinates.ravel(), y_coordinates.ravel()]
+        num_points = points.shape[0]
+        for current_point in range(num_points):
+            x, y = points[current_point, :]
+            res_x = input_slide[x : x + size.x, y : y + size.y, :]
+            res_y = target_slide[x : x + size.x, y : y + size.y, :]
             change = False
-            if (x + size[0]) > X_:
-                x = X_ - size[0]
+            if (x + size.x) > dim_x:
+                x = dim_x - size.x
                 change = True
-            if (y + size[1]) > Y_:
-                y = Y_ - size[1]
+            if (y + size.y) > dim_y:
+                y = dim_y - size.y
                 change = True
             if change:
-                res_x = X_samples[i][x : x + size[0], y : y + size[1], :]
-                res_y = Y_samples[i][x : x + size[0], y : y + size[1], :]
+                res_x = input_slide[x : x + size.x, y : y + size.y, :]
+                res_y = target_slide[x : x + size.x, y : y + size.y, :]
             # Check if res_y contains any pixels with the ignore label
             keep = True
-            if keep and check_class(res_y, ignore_color, upper_threshold=0.9):
+            if keep and check_class(res_y, ignore_color, upper_threshold=1.0):
                 keep = False
                 # Check if res_y contains enough pixels with background label
-            if keep and check_class(res_y, bg_color):
+            if keep and check_class(res_y, bg_color, upper_threshold=1.0):
                 keep = False
             if keep and check_class(
                 res_y, bg_color, probability=0.5, lower_threshold=0.7
             ):
                 keep = False
             if keep:
-                X.append(res_x)
-                Y.append(res_y)
-    X = np.asarray(X, dtype="float")
-    Y = np.asarray(Y, dtype="uint8")
-    for i in range(len(X)):  ## Check_contrast will be available from version 0.15
-        imsave(path + prefix + "/X_{}.tif".format(i), X[i, ...], check_contrast=False)
-        imsave(
-            path + prefix + "/gt/X_{}.tif".format(i), Y[i, ...], check_contrast=False
-        )
+                imsave(
+                    path + prefix + f"/{name}_{current_point:0>4d}.tif",
+                    res_x.astype(np.single),
+                    check_contrast=False,
+                )
+                imsave(
+                    path + prefix + f"/gt/{name}_{current_point:0>4d}.tif",
+                    res_y.astype(np.ubyte),
+                    check_contrast=False,
+                )
+            if keep and duplication_list is not None:
+                for color in duplication_list:
+                    if duplicate_tile(res_y, color):
+                        imsave(
+                            path + prefix + f"/{name}_1{current_point:0>4d}.tif",
+                            res_x.astype("float"),
+                            check_contrast=False,
+                        )
+                        imsave(
+                            path + prefix + f"/gt/{name}_1{current_point:0>4d}.tif",
+                            res_y.astype("uint8"),
+                            check_contrast=False,
+                        )
+
+
+def read_images(path, prefix, target=False):
+    """Read whole slide images into a dictionary. The keys are truncated file IDs
+
+    Parameters
+    ----------
+    path : str
+        path to whole slide images
+    prefix : str
+        image data set qualifier (usually one of 'train' or 'test')
+    target : bool, optional
+        defines whether to look for input or target images, by default False
+
+    Returns
+    -------
+    dict
+        dictionary of image arrays
+    """
+    path = [path]
+    ext = "*.tif"
+    dtype = np.single
+    kwarg = {"fastij": True}
+    denom = 255.0
+    if target:
+        path.append("gt")
+        ext = "*.png"
+        dtype = np.ubyte
+        kwarg = {"pilmode": "RGB"}
+        denom = 1
+    slide_files = (sorted(glob(join(*path, prefix + ext)), key=str.lower))
+    slide_names = {
+        '-'.join(splitext(split(file)[1])[0].split("-")[1:]).replace("-corrected", ""): file
+        for file in slide_files
+    }
+    images = {
+        name: imread(path, **kwarg).astype(dtype) / denom
+        for name, path in slide_names.items()
+    }
+    return images
+
+def duplicate_tile(tile, label_color):
+    detection_threshold = 0.05
+    segmap = np.logical_and.reduce(tile == label_color, axis=-1)
+    if segmap.sum() >= segmap.size * detection_threshold:
+        return True
+    return False
 
 
 def check_class(
@@ -277,7 +338,11 @@ def load_slides_as_dict(
         for i in X.keys():
             X[i] = (X[i] - x_min)/(x_max - x_min)
     if load_gt:
-        Y_files = sorted(glob(join(path, 'gt', prefix, "*.png")))
+        Y_files = sorted(glob(join(path, 'gt', prefix + "*.png")))
+        slide_names = [
+            '-'.join(splitext(split(file)[1])[0].split("-")[1:]).replace("-corrected", "")
+            for file in Y_files
+        ]
         Y_color = {
             name: imread(path).astype("uint8")[:, :, :3]
             for name, path in zip(slide_names, Y_files)
