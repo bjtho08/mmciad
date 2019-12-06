@@ -12,21 +12,31 @@ from keras.utils import to_categorical
 def calculate_stats(input_tiles=None, path=None, prefix="train", local=True):
     """Calculate mean and standard deviation for input image dataset,
     either local (per channel, default) or global (all channels).
+    
+    Parameters
+    ----------
+    input_tiles : list of array-like, optional
+        data structure containing image arrays, by default None
 
-    :param input_tiles: data structure containing image arrays
-    :type input_tiles: list of array-like
-    :param path: path to folder containing the dataset, defaults to
-    None. If path is specified, param X will not be used.
-    :type path: str, optinoal
-    :param prefix: filename prefix, defaults to 'train'
-    :type prefix: str, optional
-    :param local: determines statistics are calculated per channel or
-    not, defaults to True
-    :type local: bool, optional
-    :return: calculated statistics. if local is True, the function
-    returns two lists of ints, otherwise two ints
-    :rtype: lists or ints
-    """
+    path : str, optional
+        path to folder containing the dataset, by default None.
+        If path is specified, param X will not be used.
+
+    prefix : str, optional
+        filename prefix, by default "train"
+
+    local : bool, optional
+        determines statistics are calculated per channel or
+        not, by default True
+    
+    Returns
+    -------
+    lists or ints
+        calculated statistics. if local is True, the function
+        returns two lists of ints, otherwise two ints
+    """ 
+
+
     if isinstance(path, str):
         input_files = glob(join(path, prefix + "*.tif"))
         input_tiles = [
@@ -51,9 +61,25 @@ def calculate_stats(input_tiles=None, path=None, prefix="train", local=True):
         maxs = input_tiles_center.max(axis=-2, keepdims=True)
         return means, stds, mins, maxs
 
+def histogram_augment(images, random_state, parents, hooks):
+    for img in images:
+        pass
+    return images
+
+def preaugment(img_list):
+    seq = iaa.Sequential([ # augmenters that will affect the input image pixel values
+        iaa.OneOf([iaa.Add((-0.07, 0.07)), iaa.Multiply((0.8, 1.2))]),
+        iaa.Dropout(p=(0.1, 0.5), per_channel=True)
+    ])
+    return seq.augment_images(img_list)
 
 def augmentor(img, segmap):
-    seq = iaa.SomeOf(
+    dtype = img.dtype
+    preseq = iaa.Sequential([ # augmenters that will affect the input image pixel values
+        iaa.OneOf([iaa.Add((-0.07, 0.07)), iaa.Multiply((0.8, 1.2))]),
+        iaa.Dropout(p=(0.1, 0.5), per_channel=True),
+    ])
+    seq = iaa.SomeOf( # augmenters that will distort input and target images in identical fashion
         (0, None),
         [
             iaa.Fliplr(1),
@@ -64,10 +90,10 @@ def augmentor(img, segmap):
                 scale=(0.01, 0.05), nb_rows=6, nb_cols=6, mode="reflect"
             ),
             iaa.ElasticTransformation(alpha=(0, 80), sigma=(8.0), mode="reflect"),
-        ],
+        ]
     )
     seq_det = seq.to_deterministic()
-    img_aug = seq_det.augment_images(img)
+    img_aug = seq_det.augment_images(preseq.augment_images(img.astype("float32").astype(dtype)))
     segmap_aug = seq_det.augment_images(segmap)
     return img_aug, segmap_aug
 

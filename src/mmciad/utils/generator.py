@@ -5,7 +5,7 @@ from glob import glob
 import numpy as np
 from skimage.io import imread
 from keras.utils import Sequence, to_categorical
-from .preprocessing import augmentor, merge_labels
+from .preprocessing import preaugment, augmentor, merge_labels
 
 
 class DataGenerator(Sequence):
@@ -88,7 +88,8 @@ class DataGenerator(Sequence):
         # Generate data
         for i, ID in enumerate(list_IDs_temp):
             # Store sample
-            X[i] = imread(self.path + ID + ".tif").astype("float")
+            X[i] = imread(self.path + ID + ".tif")
+            X = X.astype(np.float32, copy=False)
             X[i] = (X[i] - self.means) / self.stds
             X[i] = (X[i] - self.x_min)/(self.x_max - self.x_min)
             # Store class
@@ -103,6 +104,7 @@ class DataGenerator(Sequence):
                 y_class[i] = merge_labels(y_class[i], self.remap_labels)
             y_class[i] = to_categorical(y_class[i], num_classes=self.n_classes)
         if self.augment:
+            assert np.issubdtype(X.dtype, np.float32)
             X, y = augmentor(X, y_class)
 
-        return np.asarray(X, dtype="float"), np.asarray(y, dtype="uint8")
+        return np.asarray(X, dtype="float64"), np.asarray(y, dtype="uint8")

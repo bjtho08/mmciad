@@ -118,7 +118,7 @@ def rgb_to_indexed(Y_samples, i, num_img, colors, num_cls):
     return Y_class
 
 
-def create_samples(path, bg_color, ignore_color, prefix="train", duplication_list=None):
+def create_samples(path, bg_color, ignore_color, prefix="train", output_dir=None, duplication_list=None):
     """ Read all sample slides and subdivide into square tiles. The resulting tiles are saved
     as .tif files in corresponding directories.
 
@@ -135,9 +135,12 @@ def create_samples(path, bg_color, ignore_color, prefix="train", duplication_lis
     prefix : str
         Filename prefix, e.g.
         'train', 'test', 'val'
+    output_dir : str, optional
+        Relative path for output tiles
     """
     size = Size(x=208, y=208)
-    makedirs(join(path, prefix, "gt", ""), exist_ok=True)
+    output_dir = prefix if output_dir is None else output_dir
+    makedirs(join(path, output_dir, "gt", ""), exist_ok=True)
     input_images = read_images(path, prefix)
     target_images = read_images(path, prefix, True)
     input_target_pairs = {
@@ -176,12 +179,12 @@ def create_samples(path, bg_color, ignore_color, prefix="train", duplication_lis
                 keep = False
             if keep:
                 imsave(
-                    path + prefix + f"/{name}_{current_point:0>4d}.tif",
+                    path + output_dir + f"/{name}_{current_point:0>4d}.tif",
                     res_x.astype(np.single),
                     check_contrast=False,
                 )
                 imsave(
-                    path + prefix + f"/gt/{name}_{current_point:0>4d}.tif",
+                    path + output_dir + f"/gt/{name}_{current_point:0>4d}.tif",
                     res_y.astype(np.ubyte),
                     check_contrast=False,
                 )
@@ -189,12 +192,12 @@ def create_samples(path, bg_color, ignore_color, prefix="train", duplication_lis
                 for color in duplication_list:
                     if duplicate_tile(res_y, color):
                         imsave(
-                            path + prefix + f"/{name}_1{current_point:0>4d}.tif",
+                            path + output_dir + f"/{name}_1{current_point:0>4d}.tif",
                             res_x.astype("float"),
                             check_contrast=False,
                         )
                         imsave(
-                            path + prefix + f"/gt/{name}_1{current_point:0>4d}.tif",
+                            path + output_dir + f"/gt/{name}_1{current_point:0>4d}.tif",
                             res_y.astype("uint8"),
                             check_contrast=False,
                         )

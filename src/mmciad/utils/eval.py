@@ -88,8 +88,8 @@ def predict_window(model, img, step_size=1000, wsize=1024, num_class=11):
         output_img[:] = np.nan
         for (x, y, dx, dy, I) in sliding_window(img, step_size, (wsize, wsize)):
             window_prediction = model.predict(np.expand_dims(I, axis=0))
-            output[x:dx, y:dy] = np.nanmean(
-                np.stack((output[x:dx, y:dy], window_prediction), axis=0), axis=0
+            output_img[x:dx, y:dy] = np.nanmean(
+                np.stack((output_img[x:dx, y:dy], np.squeeze(window_prediction)), axis=0), axis=0
             ).astype(dtype)
         return output_img
     output_img = model.predict(img)

@@ -2,8 +2,11 @@
 
 """
 #from keras.losses import categorical_crossentropy
+from itertools import product
 from keras import backend as K
+from keras.losses import categorical_crossentropy
 import tensorflow as tf
+import numpy as np
 
 # import pdb
 
@@ -82,7 +85,7 @@ def dice2_loss(y_true, y_pred, smooth=SMOOTH):
 
 
 def jaccard2_coef(y_true, y_pred, smooth=SMOOTH):
-    """Jaccard index coefficient
+    """Jaccard squared index coefficient
 
     :param y_true: true label
     :type y_true: int
@@ -101,7 +104,7 @@ def jaccard2_coef(y_true, y_pred, smooth=SMOOTH):
 
 
 def jaccard2_loss(y_true, y_pred, smooth=SMOOTH):
-    """Jaccard loss
+    """Jaccard squared loss
 
     :param y_true: true label
     :type y_true: int
@@ -227,47 +230,79 @@ def weighted_loss(original_loss_func, weights_list):
     :rtype: function
     """
     def loss_func(y_true, y_pred):
-        axis = -1  # if channels last
-        # axis=  1 #if channels first
+        class_selectors = y_true
 
-        # argmax returns the index of the element with the greatest value
-        # done in the class axis, it returns the class index
-        class_selectors = K.argmax(y_true, axis=axis)
-
-        # considering weights are ordered by class, for each class
-        # true(1) if the class index is equal to the weight index
-        class_selectors = [
-            K.equal(K.cast(i, "int64"), K.cast(class_selectors, "int64"))
-            for i in range(len(weights_list))
-        ]
-
-        # casting boolean to float for calculations
-        # each tensor in the list contains 1 for ground true class is equal to its index
-        # if you sum all these, you will get a tensor full of ones.
-        class_selectors = [K.cast(x, K.floatx()) for x in class_selectors]
-
-        # for each of the selections above, multiply their respective weight
         weights = [
-            sel * w
-            for sel, w in zip(
-                class_selectors, sorted(value for value in weights_list.values())
-            )
+            class_selectors[idx] * np.asarray([v for v in weights_list.values()])
+            for idx in range(len(y_true))
         ]
+        for idx, w in weights_list.items():
+            for i in range(len(weights)):
+                weights[i][:] = 1.0
+                if w == 0:
+                    weights[i][idx] = 2.0
+                    weights[idx][:] = 0.0
+                    weights[idx][idx] = 1.0
+        y_pred_weighted = y_pred.__mul__(weights)
 
-        # sums all the selections
-        # result is a tensor with the respective weight for each element in predictions
-        weight_multiplier = weights[0]
-        for i in range(1, len(weights)):
-            weight_multiplier = weight_multiplier + weights[i]
-
-        # make sure your original_loss_func only collapses the class axis
-        # you need the other axes intact to multiply the weights tensor
-        loss = original_loss_func(y_true, y_pred)
-        loss = loss * weight_multiplier
-
+        loss = original_loss_func(y_true, y_pred_weighted)
         return loss
 
     return loss_func
+
+
+# def weighted_loss(original_loss_func, weights_list):
+#     """create weighted loss function from unweighted.
+
+#     :param original_loss_func: unweighted loss function
+#     :type original_loss_func: function
+#     :param weights_list: list of class weights
+#     :type weights_list: list
+#     :return: weighted loss function
+#     :rtype: function
+#     """
+#     def loss_func(y_true, y_pred):
+#         axis = -1  # if channels last
+#         # axis=  1 #if channels first
+
+#         # argmax returns the index of the element with the greatest value
+#         # done in the class axis, it returns the class index
+#         class_selectors = K.argmax(y_true, axis=axis)
+
+#         # considering weights are ordered by class, for each class
+#         # true(1) if the class index is equal to the weight index
+#         class_selectors = [
+#             K.equal(K.cast(i, "int64"), K.cast(class_selectors, "int64"))
+#             for i in range(len(weights_list))
+#         ]
+
+#         # casting boolean to float for calculations
+#         # each tensor in the list contains 1 for ground true class is equal to its index
+#         # if you sum all these, you will get a tensor full of ones.
+#         class_selectors = [K.cast(x, K.floatx()) for x in class_selectors]
+
+#         # for each of the selections above, multiply their respective weight
+#         weights = [
+#             sel * w
+#             for sel, w in zip(
+#                 class_selectors, sorted(value for value in weights_list.values())
+#             )
+#         ]
+
+#         # sums all the selections
+#         # result is a tensor with the respective weight for each element in predictions
+#         weight_multiplier = weights[0]
+#         for i in range(1, len(weights)):
+#             weight_multiplier = weight_multiplier + weights[i]
+
+#         # make sure your original_loss_func only collapses the class axis
+#         # you need the other axes intact to multiply the weights tensor
+#         loss = original_loss_func(y_true, y_pred)
+#         loss = loss * weight_multiplier
+
+#         return loss
+
+#     return loss_func
 
 
 def binary_focal_loss(gamma=2.0, alpha=0.25):
@@ -371,3 +406,17 @@ def get_weighted_categorical_crossentropy(weights):
         return loss
 
     return w_cat_CE
+
+
+def w_categorical_crossentropy(y_true, y_pred, weights):
+    nb_cl = len(weights)
+    final_mask = K.zeros_like(y_pred[..., 0])
+    y_pred_max = K.max(y_pred, axis=-1, keepdims=True)
+    y_pred_max_mat = K.equal(y_pred, y_pred_max)
+    for c_t, c_p in product(range(nb_cl), range(nb_cl)):
+        final_mask += (
+            K.cast(weights[c_t, c_p], tf.float32)
+            * K.cast(y_pred_max_mat[..., c_p], tf.float32)
+            * K.cast(y_true[..., c_t], tf.float32)
+        )
+    return categorical_crossentropy(y_true, y_pred) * final_mask
