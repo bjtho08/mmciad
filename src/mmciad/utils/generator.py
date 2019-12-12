@@ -5,7 +5,7 @@ from glob import glob
 import numpy as np
 from skimage.io import imread
 from keras.utils import Sequence, to_categorical
-from .preprocessing import preaugment, augmentor, merge_labels
+from .preprocessing import augmentor, merge_labels
 
 
 class DataGenerator(Sequence):
@@ -19,7 +19,7 @@ class DataGenerator(Sequence):
         stds,
         x_min,
         x_max,
-        list_IDs=None,
+        id_list=None,
         batch_size=32,
         dim=(208, 208),
         n_channels=3,
@@ -37,15 +37,15 @@ class DataGenerator(Sequence):
         self.x_min = x_min
         self.x_max = x_max
         self.batch_size = batch_size
-        self.list_IDs = list_IDs
+        self.id_list = id_list
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.shuffle = shuffle
         self.augment = augmenter
         self.remap_labels = remap_labels
 
-        if self.list_IDs is None:
-            self.list_IDs = [
+        if self.id_list is None:
+            self.id_list = [
                 osp.splitext(osp.basename(i))[0]
                 for i in glob(osp.join(self.path, "*.tif"))
             ]
@@ -54,7 +54,7 @@ class DataGenerator(Sequence):
 
     def __len__(self):
         "Denotes the number of batches per epoch"
-        return int(np.floor(len(self.list_IDs) / self.batch_size))
+        return int(np.floor(len(self.id_list) / self.batch_size))
 
     def __getitem__(self, index):
         "Generate one batch of data"
@@ -62,49 +62,63 @@ class DataGenerator(Sequence):
         indexes = self.indexes[index * self.batch_size : (index + 1) * self.batch_size]
 
         # Find list of IDs
-        list_IDs_temp = [self.list_IDs[k] for k in indexes]
+        id_list_temp = [self.id_list[k] for k in indexes]
 
         # Generate data
-        X, y = self.__data_generation(list_IDs_temp)
+        input_img_batch, target_batch = self.__data_generation(id_list_temp)
 
-        return X, y
+        return input_img_batch, target_batch
 
     def on_epoch_end(self):
         "Updates indexes after each epoch"
-        self.indexes = np.arange(len(self.list_IDs))
-        if self.shuffle == True:
+        self.indexes = np.arange(len(self.id_list))
+        if self.shuffle:
             np.random.shuffle(self.indexes)
 
-    def __data_generation(self, list_IDs_temp):
+    def __data_generation(self, id_list_temp):
         "Generates data containing batch_size samples"
-        # X : (n_samples, *dim, n_channels)
+        # input_img_batch : (n_samples, *dim, n_channels)
         # Initialization
-        X = np.empty((self.batch_size, *self.dim, self.n_channels))
-        y = np.empty((self.batch_size, *self.dim, 3), dtype=np.uint8)
-        y_class = [
+        input_img_batch = np.empty((self.batch_size, *self.dim, self.n_channels))
+        target_batch = np.empty((self.batch_size, *self.dim, 3), dtype=np.uint8)
+        target_batch_class = [
             np.zeros((*self.dim, 1), dtype=np.uint8) for _ in range(self.batch_size)
         ]
 
         # Generate data
-        for i, ID in enumerate(list_IDs_temp):
+        for i, sample_id in enumerate(id_list_temp):
             # Store sample
-            X[i] = imread(self.path + ID + ".tif")
-            X = X.astype(np.float32, copy=False)
-            X[i] = (X[i] - self.means) / self.stds
-            X[i] = (X[i] - self.x_min)/(self.x_max - self.x_min)
+            input_img_batch[i] = imread(self.path + sample_id + ".tif")
+            input_img_batch = input_img_batch.astype(np.float32, copy=False)
+            input_img_batch[i] = (input_img_batch[i] - self.means) / self.stds
+            input_img_batch[i] = (input_img_batch[i] - self.x_min) / (
+                self.x_max - self.x_min
+            )
             # Store class
-            y[i,] = imread(self.path + "gt/" + ID + ".tif").astype("int64")
+            target_batch[i,] = imread(self.path + "gt/" + sample_id + ".tif").astype(
+                "int64"
+            )
             for cls_ in range(self.n_classes):
                 color = self.colorvec[cls_, :]
-                y_class[i] += np.expand_dims(
-                    np.logical_and.reduce(y[i,] == color, axis=-1) * cls_, axis=-1
+                target_batch_class[i] += np.expand_dims(
+                    np.logical_and.reduce(target_batch[i,] == color, axis=-1) * cls_,
+                    axis=-1,
                 ).astype("uint8")
             if isinstance(self.remap_labels, dict):
                 self.n_classes = len(self.remap_labels)
-                y_class[i] = merge_labels(y_class[i], self.remap_labels)
-            y_class[i] = to_categorical(y_class[i], num_classes=self.n_classes)
+                target_batch_class[i] = merge_labels(
+                    target_batch_class[i], self.remap_labels
+                )
         if self.augment:
-            assert np.issubdtype(X.dtype, np.float32)
-            X, y = augmentor(X, y_class)
-
-        return np.asarray(X, dtype="float64"), np.asarray(y, dtype="uint8")
+            assert np.issubdtype(input_img_batch.dtype, np.float32)
+            input_img_batch, target_batch_class = augmentor(
+                input_img_batch, target_batch_class
+            )
+        target_batch = [
+            to_categorical(target, num_classes=self.n_classes)
+            for target in target_batch_class
+        ]
+        return (
+            np.asarray(input_img_batch, dtype="float64"),
+            np.asarray(target_batch, dtype="uint8"),
+        )

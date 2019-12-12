@@ -1,3 +1,5 @@
+"""Preprocessing module handles all data processing preceding model training
+"""
 import os
 from os.path import join
 from glob import glob
@@ -6,13 +8,14 @@ import numpy as np
 from skimage.io import imread
 from sklearn.utils.class_weight import compute_class_weight
 from imgaug import augmenters as iaa
+from imgaug.augmentables.segmaps import SegmentationMapsOnImage
 from keras.utils import to_categorical
 
 
 def calculate_stats(input_tiles=None, path=None, prefix="train", local=True):
     """Calculate mean and standard deviation for input image dataset,
     either local (per channel, default) or global (all channels).
-    
+
     Parameters
     ----------
     input_tiles : list of array-like, optional
@@ -28,14 +31,13 @@ def calculate_stats(input_tiles=None, path=None, prefix="train", local=True):
     local : bool, optional
         determines statistics are calculated per channel or
         not, by default True
-    
+
     Returns
     -------
     lists or ints
         calculated statistics. if local is True, the function
         returns two lists of ints, otherwise two ints
-    """ 
-
+    """
 
     if isinstance(path, str):
         input_files = glob(join(path, prefix + "*.tif"))
@@ -61,40 +63,31 @@ def calculate_stats(input_tiles=None, path=None, prefix="train", local=True):
         maxs = input_tiles_center.max(axis=-2, keepdims=True)
         return means, stds, mins, maxs
 
-def histogram_augment(images, random_state, parents, hooks):
-    for img in images:
-        pass
-    return images
-
-def preaugment(img_list):
-    seq = iaa.Sequential([ # augmenters that will affect the input image pixel values
-        iaa.OneOf([iaa.Add((-0.07, 0.07)), iaa.Multiply((0.8, 1.2))]),
-        iaa.Dropout(p=(0.1, 0.5), per_channel=True)
-    ])
-    return seq.augment_images(img_list)
 
 def augmentor(img, segmap):
     dtype = img.dtype
-    preseq = iaa.Sequential([ # augmenters that will affect the input image pixel values
-        iaa.OneOf([iaa.Add((-0.07, 0.07)), iaa.Multiply((0.8, 1.2))]),
-        iaa.Dropout(p=(0.1, 0.5), per_channel=True),
-    ])
-    seq = iaa.SomeOf( # augmenters that will distort input and target images in identical fashion
-        (0, None),
-        [
-            iaa.Fliplr(1),
-            iaa.Flipud(1),
-            iaa.Affine(rotate=(-90, 90), mode="reflect"),
-            iaa.Affine(scale=(0.8, 1.2), mode="reflect"),
-            iaa.PiecewiseAffine(
-                scale=(0.01, 0.05), nb_rows=6, nb_cols=6, mode="reflect"
-            ),
-            iaa.ElasticTransformation(alpha=(0, 80), sigma=(8.0), mode="reflect"),
+    segmap = [SegmentationMapsOnImage(i, shape=segmap[0].shape) for i in segmap]
+    preseq = iaa.Sequential(
+        [  # augmenters that will affect the input image pixel values
+            iaa.OneOf([iaa.Add((-0.07, 0.07)), iaa.Multiply((0.8, 1.2))]),
+            iaa.Dropout(p=(0.1, 0.5), per_channel=True),
         ]
     )
+    afrot = iaa.Affine(rotate=(-90, 90), mode="reflect")
+    afscale = iaa.Affine(scale=(0.8, 1.2), mode="reflect")
+    eltrans = iaa.ElasticTransformation(alpha=(50, 200), sigma=(40.0), mode="reflect")
+    afrot._mode_segmentation_maps = "reflect"
+    afscale._mode_segmentation_maps = "reflect"
+    eltrans._mode_segmentation_maps = "reflect"
+    seq = iaa.SomeOf(  # augmenters that applies symmetrically
+        (0, None), [iaa.Fliplr(1), iaa.Flipud(1), afrot, afscale, eltrans]
+    )
     seq_det = seq.to_deterministic()
-    img_aug = seq_det.augment_images(preseq.augment_images(img.astype("float32").astype(dtype)))
-    segmap_aug = seq_det.augment_images(segmap)
+    img_aug = seq_det.augment_images(
+        preseq.augment_images(img.astype("float32").astype(dtype))
+    )
+    segmap_aug = seq_det.augment_segmentation_maps(segmap)
+    segmap_aug = [i.get_arr() for i in segmap_aug]
     return img_aug, segmap_aug
 
 
@@ -168,7 +161,7 @@ def class_ratio(path, class_list, colordict, prefix="train"):
 
 def merge_labels(img, remap_pattern: dict):
     """Remap values of an 8-bit image according to the supplied dict()
-    
+
     Parameters
     ----------
     img : Array-like
@@ -176,7 +169,7 @@ def merge_labels(img, remap_pattern: dict):
     remap_pattern : dict
         Dict with the format:
         {out_lbl_1: [in_lbl_1, ..., in_lbl_n],}
-    
+
     Example
     -------
     >>> target_image = np.random.randint(11, size=(208, 208, 1), dtype="uint8")
@@ -196,6 +189,6 @@ def merge_labels(img, remap_pattern: dict):
     # assert set(range(img.max())) == {
     #     val for label in remap_pattern.values() for val in label
     # }, "pattern must remap all original labels!"
-    for k, v in remap_pattern.items():
-        output_img[np.isin(img, v)] = k
+    for class_int, label in remap_pattern.items():
+        output_img[np.isin(img, label)] = class_int
     return output_img

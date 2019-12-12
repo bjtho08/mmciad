@@ -54,7 +54,13 @@ def _shortcut(input_: Layer, residual: Layer):
 
 def batchnorm_activate(m, bn, level, acti, iter_):
     n = BatchNormalization(name="block{}_bn{}".format(level, iter_))(m) if bn else m
-    n = acti(name="block{}_{}{}".format(level, acti.__name__, iter_))(n)
+    try:
+        n = acti(
+            name="block{}_{}{}".format(level, acti.__name__, iter_),
+            trainable=True
+        )(n)
+    except TypeError:
+        n = acti(name="block{}_{}{}".format(level, acti.__name__, iter_))(n)
     return n
 
 
@@ -98,8 +104,7 @@ def conv_block(m, nb_filters, conv_size, init, acti, bn, level, strides=None, do
         kernel_initializer=init,
         name="block{}_conv1".format(level),
     )(m)
-    n = acti(name="block{}_{}1".format(level, acti.__name__))(n)
-    n = BatchNormalization(name="block{}_bn1".format(level))(n) if bn else n
+    n = batchnorm_activate(n, bn, level, acti, 1)
     n = Dropout(do, name="block{}_drop1".format(level))(n) if do else n
     n = Conv2D(
         nb_filters,
@@ -108,8 +113,7 @@ def conv_block(m, nb_filters, conv_size, init, acti, bn, level, strides=None, do
         kernel_initializer=init,
         name="block{}_conv2".format(level),
     )(n)
-    n = acti(name="block{}_{}2".format(level, acti.__name__))(n)
-    n = BatchNormalization(name="block{}_bn2".format(level))(n) if bn else n
+    n = batchnorm_activate(n, bn, level, acti, 2)
     return n
 
 
@@ -186,25 +190,28 @@ def u_net(
     batchnorm=True,
     maxpool=True,
     upconv=True,
-    pretrain=0,
     sigma_noise=0,
     arch="U-Net",
+    **kwargs,
 ):
     """U-Net model.
 
-    Standard U-Net model, plus optional gaussian noise.
+    Standard U-Net model, plus optional gaussian noise, dropout,
+    batchnorm and residual blocks.
     Note that the dimensions of the input images should be
     multiples of 16.
 
     Arguments:
     shape: image shape, in the format (nb_channels, x_size, y_size).
     nb_filters : initial number of filters in the convolutional layer.
-    depth : The depth of the U-net, i.e. the number of contracting steps before expansion begins
+    depth : The depth of the U-net, i.e. the number of contracting steps
+            before expansion begins
     inc_rate : the multiplier for number of filters per layer
     conv_size : size of convolution.
     initialization: initialization of the convolutional layers.
     activation: activation of the convolutional layers.
-    sigma_noise: standard deviation of the gaussian noise layer. If equal to zero, this layer is deactivated.
+    sigma_noise: standard deviation of the gaussian noise layer.
+                 If equal to zero, this layer is deactivated.
     output_channels: number of output channels.
     drop: dropout rate
 
@@ -221,6 +228,7 @@ def u_net(
     https://github.com/jocicmarko/ultrasound-nerve-segmentation
     by Marko Jocic
     """
+    _ = kwargs
     resnet = False
     if arch.lower() not in ["u-resnet", "u-net"]:
         raise ValueError("Wrong architecture ")
@@ -269,30 +277,4 @@ def u_net(
     if sigma_noise > 0:
         o = GaussianNoise(sigma_noise, name="GaussianNoise_preout")(o)
     o = Conv2D(output_channels, 1, activation="softmax", name="conv_out")(o)
-    if resnet:
-        pretrain = 0
-        print("pretraining currently incompatible with resnet blocks")
-    if pretrain > 0:
-        pretrained_model = keras.applications.vgg19.VGG19(
-            include_top=False,
-            weights="imagenet",
-            input_tensor=None,
-            input_shape=shape,
-            pooling="max",
-        )
-        w = []
-        pretrain_layers = [
-            "block{}_conv{}".format(block, layer)
-            for block in range(1, pretrain + 1)
-            for layer in range(1, 3)
-        ]
-        for n in pretrain_layers:
-            w.append(pretrained_model.get_layer(name=n).get_weights())
-        del pretrained_model
-        new_model = Model(inputs=i, outputs=o)
-        for i, n in enumerate(pretrain_layers):
-            n = n.replace("_", "_d_")
-            new_model.get_layer(name=n).set_weights(w[i])
-            new_model.get_layer(name=n).trainable = False
-        return new_model
     return Model(inputs=i, outputs=o)

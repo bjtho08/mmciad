@@ -8,119 +8,15 @@ from collections import namedtuple
 import numpy as np
 from skimage.io import imread, imsave
 from keras.utils import to_categorical
-from .preprocessing import calculate_stats
 
 Size = namedtuple("Size", ["x", "y"])
 
 
-def read_samples(path, colors, prefix="train", n_samples=None, num_cls=None):
+def create_samples(
+    path, filter_dict=None, prefix="train", output_dir=None, duplication_list=None
+):
     """ Read all sample slides and subdivide into square tiles.
-
-    Parameters
-    ----------
-    path : str
-        Identifies the root data folder containing the whole slide images, e.g.
-        .../path/train-N8b.tif
-        .../path/gt/train-N8b.png
-    colors : np.ndarray
-        n x 3 array containing the RGB colors for each of the n classes
-    prefix : str
-        Filename prefix, e.g.
-        'train', 'test', 'val'
-    n_samples : int or None
-        Number of sample tiles to extract from each whole slide image.
-
-        If n_samples == None: the images will be subdivided into a regular grid
-        with overlapping tiles.
-
-        if n_samples > 0: n_slides*n_samples tiles will be created by creating
-        coordinate paris at random and extracting the tiles from these locations.
-    """
-    if num_cls is None:
-        raise ValueError("Required input missing: num_cls")
-    size = (208, 208)
-    X_files = sorted(glob(join(path, prefix + "*.tif")), key=str.lower)
-    Y_files = sorted(glob(join(path, "gt", prefix + "*.png")), key=str.lower)
-    num_img = len(X_files)
-    assert len(X_files) == len(Y_files)
-    X_samples = [
-        np.asarray(imread(X_files[i]).astype("float") / 255.0) for i in range(num_img)
-    ]
-    means, stds = calculate_stats(X_samples)
-    for i in range(num_img):
-        X_samples[i] = (X_samples[i] - means) / stds
-    x_range = np.asarray(
-        [[X_samples[i].min(), X_samples[i].max()] for i in range(num_img)],
-    )
-    x_min = x_range.min()
-    x_max = x_range.max()
-    for i in range(num_img):
-        X_samples[i] = (X_samples[i] - x_min)/(x_max - x_min)
-    Y_samples = np.asarray([imread(Y_files[i])[:, :, :3] for i in range(num_img)])
-    Y_class = rgb_to_indexed(Y_samples, i, num_img, colors, num_cls)
-    X = []
-    Y = []
-    if n_samples is not None:
-        for i in range(num_img):
-            X_, Y_ = Y_samples[i].shape[:2]
-            max_shape = np.array(
-                (np.asarray(Y_samples[i].shape[:2]) - np.array(size)) / 200
-            )
-            points = (
-                np.c_[
-                    np.random.randint(max_shape[0], size=n_samples),
-                    np.random.randint(max_shape[1], size=n_samples),
-                ]
-                * 200
-            )
-            for n in range(n_samples):
-                x, y = points[n, :]
-                X.append(X_samples[i][x : x + size[0], y : y + size[1], :])
-                Y.append(Y_class[i][x : x + size[0], y : y + size[1], :])
-    else:
-        for i in range(num_img):
-            X_, Y_ = Y_samples[i].shape[:2]
-            px, py = np.mgrid[0:X_:160, 0:Y_:160]
-            points = np.c_[px.ravel(), py.ravel()]
-            pr = points.shape[0]
-            for n in range(pr):
-                x, y = points[n, :]
-                res_x = X_samples[i][x : x + size[0], y : y + size[1], :]
-                res_y = Y_class[i][x : x + size[0], y : y + size[1], :]
-                change = False
-                if (x + size[0]) > X_:
-                    x = X_ - size[0]
-                    change = True
-                if (y + size[1]) > Y_:
-                    y = Y_ - size[1]
-                    change = True
-                if change:
-                    res_x = X_samples[i][x : x + size[0], y : y + size[1], :]
-                    res_y = Y_class[i][x : x + size[0], y : y + size[1], :]
-                X.append(res_x)
-                Y.append(res_y)
-    X = np.asarray(X, dtype="float")
-    Y = np.asarray(Y, dtype="uint8")
-    return X, Y, means, stds, points
-
-def rgb_to_indexed(Y_samples, i, num_img, colors, num_cls):
-    Y_class = [
-        np.expand_dims(np.zeros(Y_samples[i].shape[:2]), axis=-1)
-        for i in range(num_img)
-    ]
-    for i in range(num_img):
-        for cls_ in range(colors.shape[0]):
-            color = colors[cls_, :]
-            Y_class[i] += np.expand_dims(
-                np.logical_and.reduce(Y_samples[i] == color, axis=-1) * cls_, axis=-1
-            )
-        Y_class[i] = to_categorical(Y_class[i], num_classes=num_cls)
-    return Y_class
-
-
-def create_samples(path, bg_color, ignore_color, prefix="train", output_dir=None, duplication_list=None):
-    """ Read all sample slides and subdivide into square tiles. The resulting tiles are saved
-    as .tif files in corresponding directories.
+    The resulting tiles are saved as .tif files in corresponding directories.
 
     Parameters
     ----------
@@ -166,17 +62,18 @@ def create_samples(path, bg_color, ignore_color, prefix="train", output_dir=None
             if change:
                 res_x = input_slide[x : x + size.x, y : y + size.y, :]
                 res_y = target_slide[x : x + size.x, y : y + size.y, :]
-            # Check if res_y contains any pixels with the ignore label
+            # Check if res_y should be discarded according to filter_dict
             keep = True
-            if keep and check_class(res_y, ignore_color, upper_threshold=1.0):
-                keep = False
-                # Check if res_y contains enough pixels with background label
-            if keep and check_class(res_y, bg_color, upper_threshold=1.0):
-                keep = False
-            if keep and check_class(
-                res_y, bg_color, probability=0.5, lower_threshold=0.7
-            ):
-                keep = False
+            if isinstance(filter_dict, dict):
+                for _, (color, prob, lower, upper) in filter_dict:
+                    if keep and check_class(
+                        res_y,
+                        color,
+                        probability=prob,
+                        lower_threshold=lower,
+                        upper_threshold=upper,
+                    ):
+                        keep = False
             if keep:
                 imsave(
                     path + output_dir + f"/{name}_{current_point:0>4d}.tif",
@@ -231,9 +128,11 @@ def read_images(path, prefix, target=False):
         dtype = np.ubyte
         kwarg = {"pilmode": "RGB"}
         denom = 1
-    slide_files = (sorted(glob(join(*path, prefix + ext)), key=str.lower))
+    slide_files = sorted(glob(join(*path, prefix + ext)), key=str.lower)
     slide_names = {
-        '-'.join(splitext(split(file)[1])[0].split("-")[1:]).replace("-corrected", ""): file
+        "-".join(splitext(split(file)[1])[0].split("-")[1:]).replace(
+            "-corrected", ""
+        ): file
         for file in slide_files
     }
     images = {
@@ -241,6 +140,7 @@ def read_images(path, prefix, target=False):
         for name, path in slide_names.items()
     }
     return images
+
 
 def duplicate_tile(tile, label_color):
     detection_threshold = 0.05
@@ -251,7 +151,7 @@ def duplicate_tile(tile, label_color):
 
 
 def check_class(
-    segmap, class_color, probability=0.9, lower_threshold=0.9, upper_threshold=None
+    segmap, class_colors, probability=0.9, lower_threshold=0.9, upper_threshold=None
 ):
     """ Filter input based on how much of a given class is present in the input image.
     Returns True if image should be filtered.
@@ -260,10 +160,10 @@ def check_class(
     ----------
     :param segmap: The input image to be filtered
     :type segmap: array-like
-    :param class_color: list of length 3 with RGB color code matching
+    :param class_color: list of list of length 3 with RGB color code matching
                         the class color checking against
-    :type class_color: list of ints
-    :param probability: Probability of image being filtered if above a
+    :type class_color: list of list of ints
+    :param probability: probability of image being filtered if above a
                         certain threshold (optional, defaults to 0.9)
     :type probability: float
     :param lower_threshold: Threshold for fraction of segmap allowed to
@@ -275,15 +175,23 @@ def check_class(
                             defaults to None)
     :type upper_threshold: float or None
     """
-    segmap = np.logical_and.reduce(segmap == class_color, axis=-1)
-    if upper_threshold is not None and segmap.sum() >= segmap.size * upper_threshold:
+    assert hasattr(class_colors, "__iter__"), "class_colors must be a list of lists!"
+    template = np.zeros(segmap.shape[:-1])
+    for class_color in class_colors:
+        template += np.logical_and.reduce(segmap == class_color, axis=-1)
+    if (
+        upper_threshold is not None
+        and template.sum() >= template.size * upper_threshold
+    ):
         return True
-    if segmap.sum() >= segmap.size * lower_threshold:
+    if template.sum() >= template.size * lower_threshold:
         return np.random.rand() > 1 - probability
     return False
 
 
-def load_slides(path, colorvec: list, prefix="N8b", m=None, s=None, load_gt=True, num_cls=None):
+def load_slides(
+    path, colorvec: list, prefix="N8b", m=None, s=None, load_gt=True, num_cls=None
+):
     if load_gt and num_cls is None:
         raise ValueError("Required input missing: num_cls")
     ftype = "*.tif"
@@ -291,79 +199,94 @@ def load_slides(path, colorvec: list, prefix="N8b", m=None, s=None, load_gt=True
         m = np.array([[[[0.0, 0.0, 0.0]]]])
     if s is None:
         s = np.array([[[[1.0, 1.0, 1.0]]]])
-    X_files = glob(join(path, prefix + ftype))
+    input_img_files = glob(join(path, prefix + ftype))
     X = np.asarray(
-        [imread(X_files[i]).astype("float") / 255.0 for i in range(len(X_files))]
+        [
+            imread(input_img_files[i]).astype("float") / 255.0
+            for i in range(len(input_img_files))
+        ]
     )
     for i in range(len(X)):
         X[i] = (X[i] - m) / s
         x_min = X[i].min()
         x_max = X[i].max()
-        X[i] = (X[i] - x_min)/(x_max - x_min)
+        X[i] = (X[i] - x_min) / (x_max - x_min)
     if load_gt:
-        Y_files = glob(join(path, prefix, "*.png"))
-        Y_samples = imread(Y_files[0])[:, :, :3]
-        Y_class = np.expand_dims(np.zeros(Y_samples.shape[:2]), axis=-1)
+        target_img_files = glob(join(path, prefix, "*.png"))
+        target_img_samples = imread(target_img_files[0])[:, :, :3]
+        target_categorical = np.expand_dims(
+            np.zeros(target_img_samples.shape[:2]), axis=-1
+        )
         for cls_ in range(num_cls):
             color = colorvec[cls_, :]
-            Y_class += np.expand_dims(
-                np.logical_and.reduce(Y_samples == color, axis=-1) * cls_, axis=-1
+            target_categorical += np.expand_dims(
+                np.logical_and.reduce(target_img_samples == color, axis=-1) * cls_,
+                axis=-1,
             )
-        Y = to_categorical(Y_class, num_classes=num_cls)
+        Y = to_categorical(target_categorical, num_classes=num_cls)
         return X, Y
     return X
 
 
 def load_slides_as_dict(
-    path, prefix="N8b", m=None, s=None, x_minmax=None, load_gt=True, num_cls=None, colors=None
+    path,
+    prefix="N8b",
+    mean_list=None,
+    std_list=None,
+    input_hist_range=None,
+    load_gt=True,
+    num_cls=None,
+    colors=None,
 ):
     if load_gt and num_cls is None:
         raise ValueError("Required input missing: num_cls")
     if load_gt and colors is None:
         raise ValueError("Required input missing: num_cls")
     ftype = "*.tif"
-    if (m is None or s is None) and (s != m):
+    if (mean_list is None or std_list is None) and (std_list != mean_list):
         raise ValueError("Both m and s or neither must be supplied")
-    X_files = sorted(glob(join(path, prefix + ftype)))
+    input_img_files = sorted(glob(join(path, prefix + ftype)))
     slide_names = [
-        '-'.join(splitext(split(file)[1])[0].split("-")[1:]).replace("-corrected", "")
-        for file in X_files
+        "-".join(splitext(split(file)[1])[0].split("-")[1:]).replace("-corrected", "")
+        for file in input_img_files
     ]
-    X = {
+    input_slides = {
         name: imread(path).astype("float") / 255.0
-        for name, path in zip(slide_names, X_files)
+        for name, path in zip(slide_names, input_img_files)
     }
-    if m is not None and s is not None:
-        for i in X.keys():
-            X[i] = (X[i] - m) / s
-        x_min = x_minmax[0]
-        x_max = x_minmax[1]
-        for i in X.keys():
-            X[i] = (X[i] - x_min)/(x_max - x_min)
+    if mean_list is not None and std_list is not None:
+        for i in input_slides.keys():
+            input_slides[i] = (input_slides[i] - mean_list) / std_list
+        x_min = input_hist_range[0]
+        x_max = input_hist_range[1]
+        for i in input_slides.keys():
+            input_slides[i] = (input_slides[i] - x_min) / (x_max - x_min)
     if load_gt:
-        Y_files = sorted(glob(join(path, 'gt', prefix + "*.png")))
+        target_img_files = sorted(glob(join(path, "gt", prefix + "*.png")))
         slide_names = [
-            '-'.join(splitext(split(file)[1])[0].split("-")[1:]).replace("-corrected", "")
-            for file in Y_files
+            "-".join(splitext(split(file)[1])[0].split("-")[1:]).replace(
+                "-corrected", ""
+            )
+            for file in target_img_files
         ]
-        Y_color = {
+        target_color = {
             name: imread(path).astype("uint8")[:, :, :3]
-            for name, path in zip(slide_names, Y_files)
+            for name, path in zip(slide_names, target_img_files)
         }
-        Y_sparse = {
+        target_sparse = {
             name: np.expand_dims(np.zeros(slide.shape[:2]), axis=-1)
-            for name, slide in Y_color.items()
+            for name, slide in target_color.items()
         }
         for cls_ in range(num_cls):
             color = colors[cls_, :]
-            for name in Y_sparse.keys():
-                Y_sparse[name] += np.expand_dims(
-                    np.logical_and.reduce(Y_color[name] == color, axis=-1) * cls_,
+            for name in target_sparse.keys():
+                target_sparse[name] += np.expand_dims(
+                    np.logical_and.reduce(target_color[name] == color, axis=-1) * cls_,
                     axis=-1,
                 )
-        Y = {
+        target = {
             name: to_categorical(slide, num_classes=num_cls)
-            for name, slide in Y_sparse.items()
+            for name, slide in target_sparse.items()
         }
-        return X, Y
-    return X
+        return input_slides, target
+    return input_slides

@@ -1,7 +1,7 @@
 """Custom loss functions
 
 """
-#from keras.losses import categorical_crossentropy
+# from keras.losses import categorical_crossentropy
 from itertools import product
 from keras import backend as K
 from keras.losses import categorical_crossentropy
@@ -152,7 +152,7 @@ def jaccard1_loss(y_true, y_pred, smooth=SMOOTH):
     return 1 - jaccard1_coef(y_true, y_pred, smooth=smooth)
 
 
-# Ref: salehi17, "Twersky loss function for image segmentation using 3D FCDN"
+# Ref: salehi17, "Tversky loss function for image segmentation using 3D FCDN"
 # -> the score is computed for each class separately and then summed
 # alpha=beta=0.5 : dice coefficient
 # alpha=beta=1   : tanimoto coefficient (also known as jaccard)
@@ -188,35 +188,7 @@ def tversky_loss(y_true, y_pred, alpha=0.3, beta=0.7, smooth=1e-10):
         (1 - y_pred) * y_true
     )
     answer = (truepos + smooth) / ((truepos + smooth) + fp_and_fn)
-    return 1-answer
-
-
-# def tversky_loss(y_true, y_pred):
-#     """Tversky loss function for image segmentation
-
-#     :param y_true: [description]
-#     :type y_true: [type]
-#     :param y_pred: [description]
-#     :type y_pred: [type]
-#     :return: [description]
-#     :rtype: [type]
-#     """
-#     alpha = 0.3
-#     beta = 0.7
-
-#     ones = K.ones_like(y_true)
-#     p0 = y_pred      # proba that voxels are class i
-#     p1 = ones-y_pred # proba that voxels are not class i
-#     g0 = y_true
-#     g1 = ones-y_true
-
-#     num = K.sum(p0*g0, (0, 1, 2))
-#     den = num + alpha*K.sum(p0*g1, (0, 1, 2)) + beta*K.sum(p1*g0, (0, 1, 2))
-
-#     T = K.sum(num/den) # when summing over classes, T has dynamic range [0 Ncl]
-
-#     Ncl = K.cast(K.shape(y_true)[-1], 'float32')
-#     return Ncl-T
+    return 1 - answer
 
 
 def weighted_loss(original_loss_func, weights_list):
@@ -229,6 +201,7 @@ def weighted_loss(original_loss_func, weights_list):
     :return: weighted loss function
     :rtype: function
     """
+
     def loss_func(y_true, y_pred):
         class_selectors = y_true
 
@@ -249,60 +222,6 @@ def weighted_loss(original_loss_func, weights_list):
         return loss
 
     return loss_func
-
-
-# def weighted_loss(original_loss_func, weights_list):
-#     """create weighted loss function from unweighted.
-
-#     :param original_loss_func: unweighted loss function
-#     :type original_loss_func: function
-#     :param weights_list: list of class weights
-#     :type weights_list: list
-#     :return: weighted loss function
-#     :rtype: function
-#     """
-#     def loss_func(y_true, y_pred):
-#         axis = -1  # if channels last
-#         # axis=  1 #if channels first
-
-#         # argmax returns the index of the element with the greatest value
-#         # done in the class axis, it returns the class index
-#         class_selectors = K.argmax(y_true, axis=axis)
-
-#         # considering weights are ordered by class, for each class
-#         # true(1) if the class index is equal to the weight index
-#         class_selectors = [
-#             K.equal(K.cast(i, "int64"), K.cast(class_selectors, "int64"))
-#             for i in range(len(weights_list))
-#         ]
-
-#         # casting boolean to float for calculations
-#         # each tensor in the list contains 1 for ground true class is equal to its index
-#         # if you sum all these, you will get a tensor full of ones.
-#         class_selectors = [K.cast(x, K.floatx()) for x in class_selectors]
-
-#         # for each of the selections above, multiply their respective weight
-#         weights = [
-#             sel * w
-#             for sel, w in zip(
-#                 class_selectors, sorted(value for value in weights_list.values())
-#             )
-#         ]
-
-#         # sums all the selections
-#         # result is a tensor with the respective weight for each element in predictions
-#         weight_multiplier = weights[0]
-#         for i in range(1, len(weights)):
-#             weight_multiplier = weight_multiplier + weights[i]
-
-#         # make sure your original_loss_func only collapses the class axis
-#         # you need the other axes intact to multiply the weights tensor
-#         loss = original_loss_func(y_true, y_pred)
-#         loss = loss * weight_multiplier
-
-#         return loss
-
-#     return loss_func
 
 
 def binary_focal_loss(gamma=2.0, alpha=0.25):
@@ -420,3 +339,99 @@ def w_categorical_crossentropy(y_true, y_pred, weights):
             * K.cast(y_true[..., c_t], tf.float32)
         )
     return categorical_crossentropy(y_true, y_pred) * final_mask
+
+
+def feedback_weight_map(flat_probs, flat_labels, beta, op):
+    """
+    return the feedback weight map in 1-D tensor
+    :param flat_probs: prediction tensor in shape [-1, n_class]
+    :param flat_labels: ground truth tensor in shape [-1, n_class]
+    """
+    probs = K.reduce_sum(flat_probs * flat_labels, axis=-1)
+    weight_map = K.exp(-K.pow(probs, beta) * K.log(K.constant(op, "float")))
+    return weight_map
+
+
+def tversky_ce(y_true, y_pred):
+    """Combination of region-based and pixel-based loss function
+
+    Parameters
+    ----------
+    y_true : Array-like tensor
+        A tensor of the same shape as `y_pred`
+
+    y_pred : Array-like tensor
+        A tensor resulting from a softmax
+
+    Returns
+    -------
+    Scalar tensor
+        output tensor
+    """
+    return tversky_loss(
+        y_true, y_pred, alpha=0.3, beta=0.7, smooth=1e-10
+    ) + categorical_crossentropy(y_true, y_pred)
+
+
+def wasserstein_disagreement_map(prediction, ground_truth, M):
+    """
+    Function to calculate the pixel-wise Wasserstein distance between the
+    flattened pred_proba and the flattened labels (ground_truth) with respect
+    to the distance matrix on the label space M.
+    :param prediction: the logits after softmax
+    :param ground_truth: segmentation ground_truth
+    :param M: distance matrix on the label space
+    :return: the pixelwise distance map (wass_dis_map)
+    """
+    # pixel-wise Wassertein distance (W) between flat_pred_proba and flat_labels
+    # wrt the distance matrix on the label space M
+    n_classes = K.int_shape(prediction)[-1]
+    # unstack_labels = tf.unstack(ground_truth, axis=-1)
+    ground_truth = tf.cast(ground_truth, dtype=tf.float64)
+    # unstack_pred = tf.unstack(prediction, axis=-1)
+    prediction = tf.cast(prediction, dtype=tf.float64)
+    # print("shape of M", M.shape, "unstacked labels", unstack_labels,
+    #       "unstacked pred" ,unstack_pred)
+    # W is a weighting sum of all pairwise correlations (pred_ci x labels_cj)
+    pairwise_correlations = []
+    for i in range(n_classes):
+        for j in range(n_classes):
+            pairwise_correlations.append(
+                M[i, j] * tf.multiply(prediction[:, i], ground_truth[:, j])
+            )
+    wass_dis_map = tf.add_n(pairwise_correlations)
+    return wass_dis_map
+
+
+def generalised_wasserstein_dice_loss(y_true, y_predicted, weight_map):
+    """
+    Function to calculate the Generalised Wasserstein Dice Loss defined in
+    Fidon, L. et. al. (2017) Generalised Wasserstein Dice Score for Imbalanced
+    Multi-class Segmentation using Holistic Convolutional Networks.
+    MICCAI 2017 (BrainLes)
+    :param prediction: the logits (before softmax)
+    :param ground_truth: the segmentation ground_truth
+    :param weight_map:
+    :return: the loss
+    """
+    # apply softmax to pred scores
+    n_classes = K.int_shape(y_predicted)[-1]
+
+    ground_truth = tf.cast(tf.reshape(y_true, (-1, n_classes)), dtype=tf.int64)
+    pred_proba = tf.cast(tf.reshape(y_predicted, (-1, n_classes)), dtype=tf.float64)
+
+    M = tf.cast(weight_map, dtype=tf.float64)
+    # compute disagreement map (delta)
+    # print("M shape is ", M.shape, pred_proba, one_hot)
+    delta = wasserstein_disagreement_map(pred_proba, ground_truth, M)
+    # compute generalisation of all error for multi-class seg
+    all_error = tf.reduce_sum(delta)
+    # compute generalisation of true positives for multi-class seg
+    one_hot = tf.cast(ground_truth, dtype=tf.float64)
+    true_pos = tf.reduce_sum(
+        tf.multiply(tf.constant(M[0, :n_classes], dtype=tf.float64), one_hot), axis=1
+    )
+    true_pos = tf.reduce_sum(tf.multiply(true_pos, 1.0 - delta), axis=0)
+    WGDL = 1.0 - (2.0 * true_pos) / (2.0 * true_pos + all_error)
+
+    return tf.cast(WGDL, dtype=tf.float32)
