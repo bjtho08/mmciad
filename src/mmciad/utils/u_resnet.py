@@ -1,11 +1,11 @@
 """U-Net+ResNet model implementation with keras"""
 
-import keras
-from keras import backend as K
-from keras.models import Model
-from keras.activations import relu
-from keras.layers.merge import concatenate, add
-from keras.layers import (
+from tensorflow import keras
+from tensorflow.keras import backend as K
+from tensorflow.keras.models import Model
+from tensorflow.keras.activations import relu
+from tensorflow.keras.layers.merge import concatenate, add
+from tensorflow.keras.layers import (
     Input,
     Add,
     Activation,

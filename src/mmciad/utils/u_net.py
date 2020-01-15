@@ -1,14 +1,14 @@
 """U-Net model implementation with keras"""
 
-from keras import backend as K
-from keras.models import Model
+from tensorflow.keras import backend as K
+from tensorflow.keras.models import Model
 
 # from keras.layers.advanced_activations import LeakyReLU
 # from keras.activations import relu
-from keras.layers.advanced_activations import ReLU
+from tensorflow.keras.layers.advanced_activations import ReLU
 
 # from keras_contrib.layers.advanced_activations import swish
-from keras.layers import (
+from tensorflow.keras.layers import (
     add,
     Layer,
     Input,

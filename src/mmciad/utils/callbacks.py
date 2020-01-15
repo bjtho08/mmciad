@@ -7,8 +7,8 @@ from logging.handlers import RotatingFileHandler
 from time import sleep
 
 import numpy as np
-from keras import backend as K
-from keras.callbacks import Callback
+from tensorflow.keras import backend as K
+from tensorflow.keras.callbacks import Callback
 
 
 class WriteLog(Callback):

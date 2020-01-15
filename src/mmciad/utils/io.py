@@ -7,7 +7,7 @@ from glob import glob
 from collections import namedtuple
 import numpy as np
 from skimage.io import imread, imsave
-from keras.utils import to_categorical
+from tensorflow.keras.utils import to_categorical
 
 Size = namedtuple("Size", ["x", "y"])
 

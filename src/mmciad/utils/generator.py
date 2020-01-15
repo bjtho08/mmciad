@@ -4,7 +4,7 @@ import os.path as osp
 from glob import glob
 import numpy as np
 from skimage.io import imread
-from keras.utils import Sequence, to_categorical
+from tensorflow.keras.utils import Sequence, to_categorical
 from .preprocessing import augmentor, merge_labels
 
 
