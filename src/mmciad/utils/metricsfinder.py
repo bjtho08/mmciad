@@ -148,6 +148,3 @@ class MetricsFinder:
                         and opt == self.metrics["opt_func"][index]
                     ):
                         self.metrics["init_lr"][index] = lr
-
-'RAdam/learning_rate/initial_value'
-i.attr[2].value.tensor.float_val
