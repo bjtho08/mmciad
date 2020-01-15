@@ -9,7 +9,6 @@ from skimage.io import imread
 from sklearn.utils.class_weight import compute_class_weight
 from imgaug import augmenters as iaa
 from imgaug.augmentables.segmaps import SegmentationMapsOnImage
-from keras.utils import to_categorical
 
 
 def calculate_stats(input_tiles=None, path=None, prefix="train", local=True):
@@ -94,26 +93,17 @@ def augmentor(img, segmap):
 def calculate_class_weights(path, class_list, colordict, ignore=None, prefix="train"):
     label_files = glob(os.path.join(path, prefix, "gt", "*.tif"))
     num_img = len(label_files)
-    num_classes = len(class_list)
     target_tiles = np.asarray(
         [imread(label_files[i])[:, :, :3] for i in range(num_img)]
     )
-    target_categorical = [
-        np.expand_dims(np.zeros(target_tiles[i].shape[:2]), axis=-1)
-        for i in range(num_img)
-    ]
+    target_sparse = [np.zeros(target_tiles[i].shape[:2]) for i in range(num_img)]
     for i in range(num_img):
         for index, class_ in enumerate(class_list):
             color = colordict[class_]
-            target_categorical[i] += np.expand_dims(
-                np.logical_and.reduce(target_tiles[i] == color, axis=-1) * index,
-                axis=-1,
+            target_sparse[i] += (
+                np.logical_and.reduce(target_tiles[i] == color, axis=-1) * index
             )
-        target_categorical[i] = to_categorical(
-            target_categorical[i], num_classes=num_classes
-        )
-    target_tiles = np.asarray(target_categorical, dtype="uint8")
-    target_tiles = np.argmax(target_tiles, axis=-1)
+    target_tiles = np.asarray(target_sparse, dtype="uint8")
     target_tiles_flat = target_tiles.reshape(target_tiles.size)
     if ignore is not None:
         mask = np.ones_like(target_tiles_flat, dtype=bool)
@@ -135,22 +125,18 @@ def class_ratio(path, class_list, colordict, prefix="train"):
     target_tiles = np.asarray(
         [imread(label_files[i])[:, :, :3] for i in range(num_img)]
     )
-    target_categorical = [
+    target_sparse = [
         np.expand_dims(np.zeros(target_tiles[i].shape[:2]), axis=-1)
         for i in range(num_img)
     ]
     for i in range(num_img):
         for index, class_ in enumerate(class_list):
             color = colordict[class_]
-            target_categorical[i] += np.expand_dims(
+            target_sparse[i] += np.expand_dims(
                 np.logical_and.reduce(target_tiles[i] == color, axis=-1) * index,
                 axis=-1,
             )
-        target_categorical[i] = to_categorical(
-            target_categorical[i], num_classes=num_classes
-        )
-    target_tiles = np.asarray(target_categorical, dtype="uint8")
-    target_tiles = np.argmax(target_tiles, axis=-1)
+    target_tiles = np.asarray(target_sparse, dtype="uint8")
     target_tiles_flat = target_tiles.reshape(target_tiles.size)
     class_ratios = np.bincount(target_tiles_flat)
     return {

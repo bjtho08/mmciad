@@ -1,17 +1,18 @@
 """U-Net model implementation with keras"""
 
-import keras
 from keras import backend as K
 from keras.models import Model
+
 # from keras.layers.advanced_activations import LeakyReLU
-#from keras.activations import relu
+# from keras.activations import relu
 from keras.layers.advanced_activations import ReLU
-#from keras_contrib.layers.advanced_activations import swish
+
+# from keras_contrib.layers.advanced_activations import swish
 from keras.layers import (
     add,
     Layer,
     Input,
-#    Activation,
+    #    Activation,
     Concatenate,
     Conv2D,
     Conv2DTranspose,
@@ -21,6 +22,7 @@ from keras.layers import (
     Dropout,
     BatchNormalization,
 )
+
 
 def _shortcut(input_: Layer, residual: Layer):
     # input_shape = K.int_shape(input_)
@@ -56,8 +58,7 @@ def batchnorm_activate(m, bn, level, acti, iter_):
     n = BatchNormalization(name="block{}_bn{}".format(level, iter_))(m) if bn else m
     try:
         n = acti(
-            name="block{}_{}{}".format(level, acti.__name__, iter_),
-            trainable=True
+            name="block{}_{}{}".format(level, acti.__name__, iter_), trainable=True
         )(n)
     except TypeError:
         n = acti(name="block{}_{}{}".format(level, acti.__name__, iter_))(n)
@@ -161,11 +162,7 @@ def level_block(
             m = UpSampling2D(size=(2, 2), name="block{}_u_upsampling".format(level))(m)
         else:
             m = Conv2DTranspose(
-                nb_filters,
-                3,
-                strides=2,
-                padding="same",
-                kernel_initializer=init,
+                nb_filters, 3, strides=2, padding="same", kernel_initializer=init
             )(m)
             m = acti(name="block{}_{}1".format(level, acti.__name__))(m)
         n = Concatenate(name="Concatenate_{}".format(depth))([n, m])
@@ -277,4 +274,11 @@ def u_net(
     if sigma_noise > 0:
         o = GaussianNoise(sigma_noise, name="GaussianNoise_preout")(o)
     o = Conv2D(output_channels, 1, activation="softmax", name="conv_out")(o)
-    return Model(inputs=i, outputs=o)
+    modelname = (
+        "BS" + arch
+        if batchnorm and activation.__name__ == "Swish"
+        else "B" + arch
+        if batchnorm
+        else arch
+    )
+    return Model(inputs=i, outputs=o, name=modelname)

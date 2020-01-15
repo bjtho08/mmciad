@@ -65,7 +65,7 @@ def create_samples(
             # Check if res_y should be discarded according to filter_dict
             keep = True
             if isinstance(filter_dict, dict):
-                for _, (color, prob, lower, upper) in filter_dict:
+                for _, (color, prob, lower, upper) in filter_dict.items():
                     if keep and check_class(
                         res_y,
                         color,
@@ -190,9 +190,9 @@ def check_class(
 
 
 def load_slides(
-    path, colorvec: list, prefix="N8b", m=None, s=None, load_gt=True, num_cls=None
+    path, colorvec: list, prefix="N8b", m=None, s=None, gt_path=None, num_cls=None
 ):
-    if load_gt and num_cls is None:
+    if gt_path and num_cls is None:
         raise ValueError("Required input missing: num_cls")
     ftype = "*.tif"
     if m is None:
@@ -211,7 +211,7 @@ def load_slides(
         x_min = X[i].min()
         x_max = X[i].max()
         X[i] = (X[i] - x_min) / (x_max - x_min)
-    if load_gt:
+    if gt_path:
         target_img_files = glob(join(path, prefix, "*.png"))
         target_img_samples = imread(target_img_files[0])[:, :, :3]
         target_categorical = np.expand_dims(
@@ -234,13 +234,13 @@ def load_slides_as_dict(
     mean_list=None,
     std_list=None,
     input_hist_range=None,
-    load_gt=True,
+    gt_path=None,
     num_cls=None,
     colors=None,
 ):
-    if load_gt and num_cls is None:
+    if gt_path and num_cls is None:
         raise ValueError("Required input missing: num_cls")
-    if load_gt and colors is None:
+    if gt_path and colors is None:
         raise ValueError("Required input missing: num_cls")
     ftype = "*.tif"
     if (mean_list is None or std_list is None) and (std_list != mean_list):
@@ -261,8 +261,8 @@ def load_slides_as_dict(
         x_max = input_hist_range[1]
         for i in input_slides.keys():
             input_slides[i] = (input_slides[i] - x_min) / (x_max - x_min)
-    if load_gt:
-        target_img_files = sorted(glob(join(path, "gt", prefix + "*.png")))
+    if gt_path:
+        target_img_files = sorted(glob(join(path, gt_path, prefix + "*.png")))
         slide_names = [
             "-".join(splitext(split(file)[1])[0].split("-")[1:]).replace(
                 "-corrected", ""

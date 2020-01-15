@@ -14,7 +14,7 @@ class DataGenerator(Sequence):
     def __init__(
         self,
         path,
-        colorvec,
+        color_dict,
         means,
         stds,
         x_min,
@@ -31,7 +31,7 @@ class DataGenerator(Sequence):
         "Initialization"
         self.dim = dim
         self.path = path
-        self.colorvec = colorvec
+        self.color_dict = color_dict
         self.means = means
         self.stds = stds
         self.x_min = x_min
@@ -98,8 +98,7 @@ class DataGenerator(Sequence):
             target_batch[i,] = imread(self.path + "gt/" + sample_id + ".tif").astype(
                 "int64"
             )
-            for cls_ in range(self.n_classes):
-                color = self.colorvec[cls_, :]
+            for cls_, color in enumerate(self.color_dict.values()):
                 target_batch_class[i] += np.expand_dims(
                     np.logical_and.reduce(target_batch[i,] == color, axis=-1) * cls_,
                     axis=-1,
