@@ -3,8 +3,9 @@
 """
 # from keras.losses import categorical_crossentropy
 from itertools import product
-from keras import backend as K
-from keras.losses import categorical_crossentropy
+from tensorflow.keras import backend as K
+from tensorflow import math as M
+from tensorflow.keras.losses import categorical_crossentropy
 import tensorflow as tf
 import numpy as np
 

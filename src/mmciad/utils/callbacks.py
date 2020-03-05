@@ -7,53 +7,7 @@ from logging.handlers import RotatingFileHandler
 from time import sleep
 
 import numpy as np
-from keras import backend as K
-from keras.callbacks import Callback
-
-
-class WriteLog(Callback):
-    """Logging callback writes relevant training info to separate log"""
-    def __init__(self, hyperparams=None):
-        """__init__
-
-        :param params: model hyperparameters, defaults to None
-        :type params: dict, optional
-        """
-        super(WriteLog, self).__init__()
-        self.hyperparams = hyperparams or {}
-        self.logger = logging.getLogger("Training Log")
-        self.logger.setLevel(logging.INFO)
-        self.handler = RotatingFileHandler(
-            "traininglog.txt", maxBytes=20000, backupCount=5
-        )
-        self.formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        self.handler.setFormatter(self.formatter)
-        self.logger.addHandler(self.handler)
-        self.old_lr = 0
-
-    def on_train_begin(self, logs=None):
-        self.logger.info("Training started")
-        self.old_lr = K.get_value(self.model.optimizer.lr)
-        if self.params:
-            self.logger.info("Current parameters: %s", self.hyperparams)
-
-    def on_train_end(self, logs=None):
-        self.logger.info("Training finished.\n\n")
-
-    def on_epoch_end(self, epoch, logs=None):
-        self.logger.info(
-            "Epoch: %5d:\tloss: %7.4f, acc: %1.4f, val_loss: %7.4f, val_acc: %1.4f",
-            epoch + 1, logs["loss"], logs["acc"], logs["val_loss"], logs["val_acc"]
-        )
-        new_lr = K.get_value(self.model.optimizer.lr)
-        if self.old_lr > new_lr:
-            self.logger.info(
-                "Learning rate reduced from %1.7f to %1.7f",
-                self.old_lr, new_lr
-            )
-            self.old_lr = new_lr
+from tensorflow.keras.callbacks import Callback
 
 
 class PatchedModelCheckpoint(Callback):

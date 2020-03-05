@@ -1,19 +1,32 @@
 """Input-Output module. Helps read and write data between persistent
 and volatile memory
 """
+import typing
 from os import makedirs
 from os.path import join, split, splitext
 from glob import glob
-from collections import namedtuple
+from collections import namedtuple, OrderedDict
 import numpy as np
+from tqdm import tqdm
 from skimage.io import imread, imsave
-from keras.utils import to_categorical
+from tensorflow.keras.utils import to_categorical
+from PIL import Image
+# PIL.Image.DecompressionBombError: could be decompression bomb DOS attack.
+
+Image.MAX_IMAGE_PIXELS = None
 
 Size = namedtuple("Size", ["x", "y"])
 
 
 def create_samples(
-    path, filter_dict=None, prefix="train", output_dir=None, duplication_list=None
+    path,
+    filter_dict=None,
+    prefix="train",
+    output_dir=None,
+    duplication_list=None,
+    tile_size=(208, 208),
+    overlap=20,
+    val=False,
 ):
     """ Read all sample slides and subdivide into square tiles.
     The resulting tiles are saved as .tif files in corresponding directories.
@@ -33,113 +46,177 @@ def create_samples(
         'train', 'test', 'val'
     output_dir : str, optional
         Relative path for output tiles
+    tile_size : tuple of ints, optional
+        Pixel size of the tiles created
+    overlap : int, optional
+        Amount of overlap between neighbouring tiles given in percentage of the tile size
     """
-    size = Size(x=208, y=208)
+
+    assert len(tile_size) == 2, "tile_size must give exactly two dimensions"
+    assert isinstance(tile_size[0], int) and isinstance(
+        tile_size[1], int
+    ), "Wrong type, must be int"
+    size = Size._make(tile_size)
+    assert isinstance(overlap, int), "Wrong type, must be int"
+    assert overlap < 100 and overlap >= 0, "value outside valid range (0-99)"
+    overlap_step = Size(
+        x=size.x // (100 // (100 - overlap)), y=size.y // (100 // (100 - overlap))
+    )
     output_dir = prefix if output_dir is None else output_dir
     makedirs(join(path, output_dir, "gt", ""), exist_ok=True)
-    input_images = read_images(path, prefix)
-    target_images = read_images(path, prefix, True)
-    input_target_pairs = {
-        name: (input_image, target_images[name])
-        for name, input_image in input_images.items()
-    }
-    for name, (input_slide, target_slide) in input_target_pairs.items():
-        dim_x, dim_y = target_slide.shape[:2]
-        x_coordinates, y_coordinates = np.mgrid[0:dim_x:160, 0:dim_y:160]
-        points = np.c_[x_coordinates.ravel(), y_coordinates.ravel()]
-        num_points = points.shape[0]
-        for current_point in range(num_points):
-            x, y = points[current_point, :]
-            res_x = input_slide[x : x + size.x, y : y + size.y, :]
-            res_y = target_slide[x : x + size.x, y : y + size.y, :]
-            change = False
-            if (x + size.x) > dim_x:
-                x = dim_x - size.x
-                change = True
-            if (y + size.y) > dim_y:
-                y = dim_y - size.y
-                change = True
-            if change:
+    image_fetcher = ImageFetcher(path, join(path, "gt"), prefix, "tif", "png")
+    with tqdm(total=len(image_fetcher)) as pbar:
+        for name, input_slide, target_slide in image_fetcher.yield_pair():
+            dim_x, dim_y = target_slide.shape[:2]
+            x_coords, y_coords = np.mgrid[
+                0 : dim_x : overlap_step.x, 0 : dim_y : overlap_step.y
+            ]
+            points = np.c_[x_coords.ravel(), y_coords.ravel()]
+            num_points = points.shape[0]
+            for current_point in range(num_points):
+                x, y = points[current_point, :]
                 res_x = input_slide[x : x + size.x, y : y + size.y, :]
                 res_y = target_slide[x : x + size.x, y : y + size.y, :]
-            # Check if res_y should be discarded according to filter_dict
-            keep = True
-            if isinstance(filter_dict, dict):
-                for _, (color, prob, lower, upper) in filter_dict.items():
-                    if keep and check_class(
+                change = False
+                if (x + size.x) > dim_x:
+                    x = dim_x - size.x
+                    change = True
+                if (y + size.y) > dim_y:
+                    y = dim_y - size.y
+                    change = True
+                if change:
+                    res_x = input_slide[x : x + size.x, y : y + size.y, :]
+                    res_y = target_slide[x : x + size.x, y : y + size.y, :]
+                # Check if res_y should be discarded according to filter_dict
+                keep = True
+                if isinstance(filter_dict, dict):
+                    for _, (color, prob, lower, upper) in filter_dict.items():
+                        if keep and check_class(
+                            res_y,
+                            color,
+                            probability=prob,
+                            lower_threshold=lower,
+                            upper_threshold=upper,
+                        ):
+                            keep = False
+                if keep:
+                    imsave(
+                        path + output_dir + f"/{name}_{current_point:0>4d}.png",
+                        res_x,
+                        check_contrast=False,
+                    )
+                    imsave(
+                        path + output_dir + f"/gt/{name}_{current_point:0>4d}.png",
                         res_y,
-                        color,
-                        probability=prob,
-                        lower_threshold=lower,
-                        upper_threshold=upper,
-                    ):
-                        keep = False
-            if keep:
-                imsave(
-                    path + output_dir + f"/{name}_{current_point:0>4d}.tif",
-                    res_x.astype(np.single),
-                    check_contrast=False,
-                )
-                imsave(
-                    path + output_dir + f"/gt/{name}_{current_point:0>4d}.tif",
-                    res_y.astype(np.ubyte),
-                    check_contrast=False,
-                )
-            if keep and duplication_list is not None:
-                for color in duplication_list:
-                    if duplicate_tile(res_y, color):
-                        imsave(
-                            path + output_dir + f"/{name}_1{current_point:0>4d}.tif",
-                            res_x.astype("float"),
-                            check_contrast=False,
-                        )
-                        imsave(
-                            path + output_dir + f"/gt/{name}_1{current_point:0>4d}.tif",
-                            res_y.astype("uint8"),
-                            check_contrast=False,
-                        )
+                        check_contrast=False,
+                    )
+                if keep and duplication_list is not None:
+                    for color in duplication_list:
+                        if duplicate_tile(res_y, color):
+                            imsave(
+                                path
+                                + output_dir
+                                + f"/{name}_dup_{current_point:0>4d}.png",
+                                res_x,
+                                check_contrast=False,
+                            )
+                            imsave(
+                                path
+                                + output_dir
+                                + f"/gt/{name}_dup_{current_point:0>4d}.png",
+                                res_y,
+                                check_contrast=False,
+                            )
+            pbar.update(1)
 
 
-def read_images(path, prefix, target=False):
-    """Read whole slide images into a dictionary. The keys are truncated file IDs
+class ImageFetcher:
+    """Gathers image paths for generating pairs of input and target
 
-    Parameters
-    ----------
-    path : str
-        path to whole slide images
-    prefix : str
-        image data set qualifier (usually one of 'train' or 'test')
-    target : bool, optional
-        defines whether to look for input or target images, by default False
-
-    Returns
-    -------
-    dict
-        dictionary of image arrays
+    Arguments:
+        input_path {str} -- Path to input image dir
+        target_path {str} -- Path to target image dir
+        prefix {[type]} -- Image data prefix
+        input_ext {str} -- Input file extension
+        target_ext {str} -- Target file extension
+    
+    Returns:
+        ImageFetcher instance
     """
-    path = [path]
-    ext = "*.tif"
-    dtype = np.single
-    kwarg = {"fastij": True}
-    denom = 255.0
-    if target:
-        path.append("gt")
-        ext = "*.png"
-        dtype = np.ubyte
-        kwarg = {"pilmode": "RGB"}
-        denom = 1
-    slide_files = sorted(glob(join(*path, prefix + ext)), key=str.lower)
-    slide_names = {
-        "-".join(splitext(split(file)[1])[0].split("-")[1:]).replace(
-            "-corrected", ""
-        ): file
-        for file in slide_files
-    }
-    images = {
-        name: imread(path, **kwarg).astype(dtype) / denom
-        for name, path in slide_names.items()
-    }
-    return images
+
+    def __init__(
+        self, input_path: str, target_path: str, prefix, input_ext: str, target_ext: str
+    ):
+        """Create new instance of ImageFetcher object
+        
+        Arguments:
+            input_path {str} -- Path to input image dir
+            target_path {str} -- Path to target image dir
+            prefix {[type]} -- Image data prefix
+            input_ext {str} -- Input file extension
+            target_ext {str} -- Target file extension
+        """
+        self.input_path = input_path
+        self.target_path = target_path
+        self.prefix = prefix
+        self.input_ext = input_ext
+        self.target_ext = target_ext
+        self.input_dict = self.fetch_list(self.input_path, self.prefix, self.input_ext)
+        self.target_dict = self.fetch_list(
+            self.target_path, self.prefix, self.target_ext
+        )
+        assert len(self.input_dict) == len(
+            self.target_dict
+        ), f"Input/target length mismatch ({len(self.input_dict)} vs {len(self.target_dict)})"
+
+    def __len__(self) -> int:
+        """Return length of source directory
+        """
+        return len(self.input_dict)
+
+    def fetch_list(self, path: str, prefix: str, ext="tif") -> dict:
+        """fetch filenames from path. The keys are truncated file IDs
+
+        Parameters
+        ----------
+        path : str
+            path to whole slide images
+        prefix : str
+            image data set qualifier (usually one of 'train' or 'test')
+        ext : str, default "tif"
+            filename extension to look for
+
+        Returns
+        -------
+        dict
+            dictionary of image arrays
+        """
+
+        search_string = [prefix, "*." + ext]
+        slide_files = sorted(glob(join(path, "".join(search_string))), key=str.lower)
+        file_dict = OrderedDict()
+        for file in slide_files:
+            file_id = "-".join(splitext(split(file)[1])[0].split("-")[1:]).replace(
+                "-corrected", ""
+            )
+            file_dict[file_id] = file
+        return file_dict
+
+    def yield_pair(self):
+        input_kwargs = {
+            "kwarg": {"plugin": "tifffile"},
+        }
+        target_kwargs = {
+            "kwarg": {"pilmode": "RGB"},
+        }
+
+        for name, input_img_path in self.input_dict.items():
+            target_img_path = self.target_dict[name]
+            yield (
+                name,
+                imread(input_img_path, **input_kwargs["kwarg"]),
+                imread(target_img_path, **target_kwargs["kwarg"]),
+            )
 
 
 def duplicate_tile(tile, label_color):
@@ -189,43 +266,43 @@ def check_class(
     return False
 
 
-def load_slides(
-    path, colorvec: list, prefix="N8b", m=None, s=None, gt_path=None, num_cls=None
-):
-    if gt_path and num_cls is None:
-        raise ValueError("Required input missing: num_cls")
-    ftype = "*.tif"
-    if m is None:
-        m = np.array([[[[0.0, 0.0, 0.0]]]])
-    if s is None:
-        s = np.array([[[[1.0, 1.0, 1.0]]]])
-    input_img_files = glob(join(path, prefix + ftype))
-    X = np.asarray(
-        [
-            imread(input_img_files[i]).astype("float") / 255.0
-            for i in range(len(input_img_files))
-        ]
-    )
-    for i in range(len(X)):
-        X[i] = (X[i] - m) / s
-        x_min = X[i].min()
-        x_max = X[i].max()
-        X[i] = (X[i] - x_min) / (x_max - x_min)
-    if gt_path:
-        target_img_files = glob(join(path, prefix, "*.png"))
-        target_img_samples = imread(target_img_files[0])[:, :, :3]
-        target_categorical = np.expand_dims(
-            np.zeros(target_img_samples.shape[:2]), axis=-1
-        )
-        for cls_ in range(num_cls):
-            color = colorvec[cls_, :]
-            target_categorical += np.expand_dims(
-                np.logical_and.reduce(target_img_samples == color, axis=-1) * cls_,
-                axis=-1,
-            )
-        Y = to_categorical(target_categorical, num_classes=num_cls)
-        return X, Y
-    return X
+# def load_slides(
+#     path, colorvec: list, prefix="N8b", m=None, s=None, gt_path=None, num_cls=None
+# ):
+#     if gt_path and num_cls is None:
+#         raise ValueError("Required input missing: num_cls")
+#     ftype = "*.tif"
+#     if m is None:
+#         m = np.array([[[[0.0, 0.0, 0.0]]]])
+#     if s is None:
+#         s = np.array([[[[1.0, 1.0, 1.0]]]])
+#     input_img_files = glob(join(path, prefix + ftype))
+#     X = np.asarray(
+#         [
+#             imread(input_img_files[i]).astype("float") / 255.0
+#             for i in range(len(input_img_files))
+#         ]
+#     )
+#     for i in range(len(X)):
+#         X[i] = (X[i] - m) / s
+#         x_min = X[i].min()
+#         x_max = X[i].max()
+#         X[i] = (X[i] - x_min) / (x_max - x_min)
+#     if gt_path:
+#         target_img_files = glob(join(path, prefix, "*.png"))
+#         target_img_samples = imread(target_img_files[0])[:, :, :3]
+#         target_categorical = np.expand_dims(
+#             np.zeros(target_img_samples.shape[:2]), axis=-1
+#         )
+#         for cls_ in range(num_cls):
+#             color = colorvec[cls_, :]
+#             target_categorical += np.expand_dims(
+#                 np.logical_and.reduce(target_img_samples == color, axis=-1) * cls_,
+#                 axis=-1,
+#             )
+#         Y = to_categorical(target_categorical, num_classes=num_cls)
+#         return X, Y
+#     return X
 
 
 def load_slides_as_dict(

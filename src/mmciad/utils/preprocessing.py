@@ -4,6 +4,7 @@ import os
 from os.path import join
 from glob import glob
 import numpy as np
+from tqdm import tqdm
 
 from skimage.io import imread
 from sklearn.utils.class_weight import compute_class_weight
@@ -40,27 +41,33 @@ def calculate_stats(input_tiles=None, path=None, prefix="train", local=True):
 
     if isinstance(path, str):
         input_files = glob(join(path, prefix + "*.tif"))
-        input_tiles = [
-            imread(i).reshape(-1, imread(i).shape[-1]).astype(np.float) / 255.0
-            for i in input_files
-        ]
-    input_tiles = np.vstack(input_tiles)
-    input_tiles = input_tiles[None, None, :]
-    if local:
-        means, stds = (
-            input_tiles.mean(axis=-2, keepdims=True),
-            input_tiles.std(axis=-2, keepdims=True),
-        )
-        input_tiles_center = (input_tiles - means) / stds
-        mins = input_tiles_center.min(axis=-2, keepdims=True)
-        maxs = input_tiles_center.max(axis=-2, keepdims=True)
-        return means, stds, mins, maxs
-    if not local:
-        means, stds = (input_tiles.mean(keepdims=True), input_tiles.std(keepdims=True))
-        input_tiles_center = (input_tiles - means) / stds
-        mins = input_tiles_center.min(axis=-2, keepdims=True)
-        maxs = input_tiles_center.max(axis=-2, keepdims=True)
-        return means, stds, mins, maxs
+    pixel_count = 0
+    num_channels = 3 if local else 1
+    img_sum = np.zeros(num_channels)
+    img_sum_squared = np.zeros(num_channels)
+    img_min = np.ones(num_channels)
+    img_max = np.zeros(num_channels)
+
+    with tqdm(total=len(input_files)) as pbar:
+        for img_path in input_files:
+            img = imread(img_path)
+            img = img/255. if not np.issubdtype(img.dtype, np.floating) else img
+            pixel_count += img.size/img.shape[-1]
+            img_sum += np.sum(img, axis=(0, 1))
+            img_sum_squared += np.square(img_sum)
+            with np.nditer(img_min, flags=['c_index'], op_flags=['readwrite']) as it:
+                for elem in it:
+                    new_min = np.min(img[it.index])
+                    elem[...] = new_min if new_min < elem else elem
+            with np.nditer(img_max, flags=['c_index'], op_flags=['readwrite']) as it:
+                for elem in it:
+                    new_max = np.amax(img[it.index])
+                    elem[...] = new_max if new_max > elem else elem
+            pbar.update(1)
+     
+    img_mean = img_sum / pixel_count
+    img_std = np.sqrt(img_sum_squared / pixel_count - np.square(img_mean))
+    return img_mean, img_std, img_min, img_max
 
 
 def augmentor(img, segmap):
@@ -87,6 +94,30 @@ def augmentor(img, segmap):
     )
     segmap_aug = seq_det.augment_segmentation_maps(segmap)
     segmap_aug = [i.get_arr() for i in segmap_aug]
+    return img_aug, segmap_aug
+
+def tf_augmentor(img, segmap):
+    dtype = img.dtype
+    segmap = SegmentationMapsOnImage(segmap, shape=segmap.shape)
+    preseq = iaa.Sequential(
+        [  # augmenters that will affect the input image pixel values
+            iaa.OneOf([iaa.Add((-20, 20)), iaa.Multiply((0.8, 1.2))]),
+            iaa.Dropout(p=(0.01, 0.5), per_channel=False),
+        ]
+    )
+    afrot = iaa.Affine(rotate=(-90, 90), mode="reflect")
+    afscale = iaa.Affine(scale=(0.8, 1.2), mode="reflect")
+    eltrans = iaa.ElasticTransformation(alpha=(50, 200), sigma=(40.0), mode="reflect")
+    afrot._mode_segmentation_maps = "reflect"
+    afscale._mode_segmentation_maps = "reflect"
+    eltrans._mode_segmentation_maps = "reflect"
+    seq = iaa.SomeOf(  # augmenters that applies symmetrically
+        (0, None), [iaa.Fliplr(1), iaa.Flipud(1), afrot, afscale, eltrans]
+    )
+    seq_det = seq.to_deterministic()
+    img_aug = seq_det.augment_images(preseq.augment_images(img))
+    segmap_aug = seq_det.augment_segmentation_maps(segmap)
+    segmap_aug = segmap_aug.get_arr()
     return img_aug, segmap_aug
 
 

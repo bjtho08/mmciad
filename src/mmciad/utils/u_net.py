@@ -1,18 +1,18 @@
 """U-Net model implementation with keras"""
 
-from keras import backend as K
-from keras.models import Model
+import tensorflow as tf
+from tensorflow.keras import Model
 
 # from keras.layers.advanced_activations import LeakyReLU
 # from keras.activations import relu
-from keras.layers.advanced_activations import ReLU
 
 # from keras_contrib.layers.advanced_activations import swish
-from keras.layers import (
+from tensorflow.keras.layers import (
     add,
     Layer,
     Input,
-    #    Activation,
+    ReLU,
+#    Activation,
     Concatenate,
     Conv2D,
     Conv2DTranspose,
@@ -26,7 +26,7 @@ from keras.layers import (
 
 def _shortcut(input_: Layer, residual: Layer):
     # input_shape = K.int_shape(input_)
-    residual_shape = K.int_shape(residual)
+    residual_shape = residual.shape
     # stride_width = int(round(input_shape[1] / residual_shape[1]))
     # stride_height = int(round(input_shape[2] / residual_shape[2]))
     # equal_channels = input_shape[3] == residual_shape[3]

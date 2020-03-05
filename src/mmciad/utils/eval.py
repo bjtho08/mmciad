@@ -5,8 +5,8 @@ from collections import namedtuple
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
-from keras.models import load_model
-from keras.losses import categorical_crossentropy
+from tensorflow.keras.models import load_model
+from tensorflow.keras.losses import categorical_crossentropy
 from keras_contrib.layers.advanced_activations.swish import Swish
 from sklearn.metrics import jaccard_score
 from skimage.io import imsave
