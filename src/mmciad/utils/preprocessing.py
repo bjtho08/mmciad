@@ -51,10 +51,10 @@ def calculate_stats(input_tiles=None, path=None, prefix="train", local=True):
     with tqdm(total=len(input_files)) as pbar:
         for img_path in input_files:
             img = imread(img_path)
-            img = img/255. if not np.issubdtype(img.dtype, np.floating) else img
+            img = img/1. if not np.issubdtype(img.dtype, np.floating) else img
             pixel_count += img.size/img.shape[-1]
             img_sum += np.sum(img, axis=(0, 1))
-            img_sum_squared += np.square(img_sum)
+            img_sum_squared += np.sum(np.square(img), axis=(0, 1))
             with np.nditer(img_min, flags=['c_index'], op_flags=['readwrite']) as it:
                 for elem in it:
                     new_min = np.min(img[it.index])
@@ -64,7 +64,7 @@ def calculate_stats(input_tiles=None, path=None, prefix="train", local=True):
                     new_max = np.amax(img[it.index])
                     elem[...] = new_max if new_max > elem else elem
             pbar.update(1)
-     
+
     img_mean = img_sum / pixel_count
     img_std = np.sqrt(img_sum_squared / pixel_count - np.square(img_mean))
     return img_mean, img_std, img_min, img_max
@@ -97,7 +97,6 @@ def augmentor(img, segmap):
     return img_aug, segmap_aug
 
 def tf_augmentor(img, segmap):
-    dtype = img.dtype
     segmap = SegmentationMapsOnImage(segmap, shape=segmap.shape)
     preseq = iaa.Sequential(
         [  # augmenters that will affect the input image pixel values

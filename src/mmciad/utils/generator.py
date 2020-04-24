@@ -5,9 +5,8 @@ from glob import glob
 import numpy as np
 from skimage.io import imread
 import tensorflow as tf
-import matplotlib.pyplot as plt
 from tensorflow.keras.utils import to_categorical
-from mmciad.utils.preprocessing import augmentor, tf_augmentor, merge_labels
+from .preprocessing import augmentor, tf_augmentor, merge_labels
 
 RGB = 3
 INDEXED = 1
@@ -48,34 +47,34 @@ class DataGenerator(tf.keras.utils.Sequence):
         self.shuffle = shuffle
         self.augment = augment
         self.remap_labels = remap_labels
-        self.n = 0
 
         if self.id_list is None:
             self.id_list = [
                 osp.splitext(osp.basename(i))[0]
-                for i in glob(osp.join(self.path, "*.tif"))
+                for i in glob(osp.join(self.path, "*.png"))
             ]
 
         self.__selftest()
         self.on_epoch_end()
 
-    def __next__(self):
-        data = self.__getitem__(self.n)
-        self.n += 1
+    # def __next__(self):
+    #     data = self.__getitem__(self.n)
+    #     self.n += 1
 
-        if self.n >= self.__len__():
-            self.on_epoch_end()
-            self.n = 0
-        return data
+    #     if self.n >= self.__len__():
+    #         self.on_epoch_end()
+    #         self.n = 0
+    #     return data
 
 
     def __len__(self):
         "Denotes the number of batches per epoch"
-        return int(np.floor(len(self.id_list) / self.batch_size))
+        return len(self.id_list) // self.batch_size
 
     def __getitem__(self, index):
         "Generate one batch of data"
         # Generate indexes of the batch
+        if index > self.__len__(): raise IndexError(f"Index out of bounds ({index} > {self.__len__()})")
         indexes = self.indexes[index * self.batch_size : (index + 1) * self.batch_size]
 
         # Find list of IDs
@@ -96,7 +95,6 @@ class DataGenerator(tf.keras.utils.Sequence):
         "Generates data containing batch_size samples"
         # input_img_batch : (n_samples, *dim, n_channels)
         # Initialization
-       
         input_img_batch = np.empty((self.batch_size, *self.dim, self.n_channels), dtype=np.float32)
         target_batch = np.empty((self.batch_size, *self.dim, RGB), dtype=np.uint8)
         target_batch_class = [
@@ -106,14 +104,14 @@ class DataGenerator(tf.keras.utils.Sequence):
         # Generate data
         for i, sample_id in enumerate(id_list_temp):
             # Store sample
-            input_img_batch[i] = imread(self.path + sample_id + ".tif")
+            input_img_batch[i] = imread(self.path + sample_id + ".png")
             input_img_batch = input_img_batch.astype(np.float32, copy=False)
             input_img_batch[i] = (input_img_batch[i] - self.means) / self.stds
-            input_img_batch[i] = (input_img_batch[i] - self.x_min) / (
-                self.x_max - self.x_min
-            )
+            #input_img_batch[i] = (input_img_batch[i] - self.x_min) / (
+            #    self.x_max - self.x_min
+            #)
             # Store class
-            target_batch[i,] = imread(self.path + "gt/" + sample_id + ".tif").astype(
+            target_batch[i,] = imread(self.path + "gt/" + sample_id + ".png").astype(
                 "int64"
             )
             for cls_, color in enumerate(self.color_dict.values()):
@@ -139,16 +137,16 @@ class DataGenerator(tf.keras.utils.Sequence):
         if self.batch_size == 1:
             return (
                 np.squeeze(np.asarray(input_img_batch, dtype="float64")),
-                np.squeeze(np.asarray(target_batch, dtype="uint8")),
+                np.squeeze(np.asarray(target_batch, dtype="float32")),
             )
         return (
             np.asarray(input_img_batch, dtype="float64"),
-            np.asarray(target_batch, dtype="uint8"),
+            np.asarray(target_batch, dtype="float32"),
         )
 
     def __selftest(self):
         """Generator self test. Returns None when nothing fails
-        
+
         Raises:
             TypeError: Wrong data type for batch_size
             ValueError: Invalid value for batch_size
@@ -157,7 +155,8 @@ class DataGenerator(tf.keras.utils.Sequence):
 
         if not isinstance(self.batch_size, int): raise TypeError(f"Batch size: {type(self.batch_size)} is not an instance of int()")
         if self.batch_size < 1: raise ValueError(f"Batch size: {self.batch_size} cannot be less than 1")
-        if len(self.id_list) < 1: raise FileNotFoundError(f"Empty dataset ({len(self.id_list)}). Check path for errors")
+        if len(self.id_list) < 1: raise FileNotFoundError(f"Empty dataset ({len(self.id_list)}). Check path ({self.path}) for errors")
+
 
 class DataSet(object):
     def __init__(
@@ -250,14 +249,14 @@ class DataSet(object):
 
 
 
-path = '/nb_projects/AAA_ml/data/training/*.png'
-val_ds = DataSet(path, None, 1, 1, 0, 255, dim=(384, 384))
-# labeled_val_ds = val_ds.map(process_path, num_parallel_calls=AUTOTUNE)
-val_ds.prepare_for_training(12)
+# path = '/nb_projects/AAA_ml/data/training/*.png'
+# val_ds = DataSet(path, None, 1, 1, 0, 255, dim=(384, 384))
+# # labeled_val_ds = val_ds.map(process_path, num_parallel_calls=AUTOTUNE)
+# val_ds.prepare_for_training(12)
 
-for img, gt in val_ds.data.take(4):
-    print(f"image shape: {img.shape}, dtype: {img.dtype}")
-    print(f"gt shape: {gt.shape}")
+# for img, gt in val_ds.data.take(4):
+#     print(f"image shape: {img.shape}, dtype: {img.dtype}")
+#     print(f"gt shape: {gt.shape}")
 #     plt.subplot(1,2,1)
 #     plt.imshow(img[0])
 #     plt.subplot(1,2,2)

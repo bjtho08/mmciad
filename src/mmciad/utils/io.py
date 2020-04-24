@@ -1,16 +1,19 @@
 """Input-Output module. Helps read and write data between persistent
 and volatile memory
 """
-import typing
+import os
 from os import makedirs
-from os.path import join, split, splitext
+from tempfile import mkstemp
+from os.path import join, split, splitext, isdir
 from glob import glob
+import shutil
 from collections import namedtuple, OrderedDict
 import numpy as np
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from skimage.io import imread, imsave
 from tensorflow.keras.utils import to_categorical
 from PIL import Image
+
 # PIL.Image.DecompressionBombError: could be decompression bomb DOS attack.
 
 Image.MAX_IMAGE_PIXELS = None
@@ -19,14 +22,13 @@ Size = namedtuple("Size", ["x", "y"])
 
 
 def create_samples(
-    path,
-    filter_dict=None,
+    path: str,
+    filter_dict: dict = None,
     prefix="train",
     output_dir=None,
     duplication_list=None,
     tile_size=(208, 208),
     overlap=20,
-    val=False,
 ):
     """ Read all sample slides and subdivide into square tiles.
     The resulting tiles are saved as .tif files in corresponding directories.
@@ -58,7 +60,7 @@ def create_samples(
     ), "Wrong type, must be int"
     size = Size._make(tile_size)
     assert isinstance(overlap, int), "Wrong type, must be int"
-    assert overlap < 100 and overlap >= 0, "value outside valid range (0-99)"
+    assert 0 <= overlap < 100, "value outside valid range (0-99)"
     overlap_step = Size(
         x=size.x // (100 // (100 - overlap)), y=size.y // (100 // (100 - overlap))
     )
@@ -310,7 +312,7 @@ def load_slides_as_dict(
     prefix="N8b",
     mean_list=None,
     std_list=None,
-    input_hist_range=None,
+    input_max=255,
     gt_path=None,
     num_cls=None,
     colors=None,
@@ -331,13 +333,51 @@ def load_slides_as_dict(
         name: imread(path).astype("float") / 255.0
         for name, path in zip(slide_names, input_img_files)
     }
+    for img in input_slides.values():
+        if img.size > 3072 ** 2:
+            memmap = True
+    if memmap:
+        memmap_input_slides = {
+            name: np.memmap(
+                mkstemp(dir=path + "../tmp")[1],
+                dtype=np.floating,
+                mode="w+",
+                shape=img.shape,
+            )
+            for name, img in input_slides.items()
+        }
+        for name, img in memmap_input_slides.items():
+            memmap_input_slides[name][:] = input_slides[name][:]
+            input_slides.pop(name)
+        input_slides = memmap_input_slides
+
     if mean_list is not None and std_list is not None:
-        for i in input_slides.keys():
-            input_slides[i] = (input_slides[i] - mean_list) / std_list
-        x_min = input_hist_range[0]
-        x_max = input_hist_range[1]
-        for i in input_slides.keys():
-            input_slides[i] = (input_slides[i] - x_min) / (x_max - x_min)
+        if memmap:
+            for i in tqdm(input_slides.keys()):
+                tmp = np.memmap(
+                    mkstemp(dir=path + "../tmp")[1],
+                    dtype=np.floating,
+                    mode="w+",
+                    shape=img.shape,
+                )
+                scaffold: np.array = np.zeros(img.shape[:1])
+                pbar = tqdm(total=scaffold[:].shape[0])
+                it = np.nditer(scaffold, flags=["multi_index"])
+                while not it.finished:
+                    tmp[it.multi_index] = (
+                        (input_slides[i][it.multi_index] - mean_list) / std_list
+                    ) / input_max
+                    pbar.update(1)
+                    it.iternext()
+                pbar.close()
+                tmp.flush()
+                input_slides[i] = tmp
+            for i in memmap_input_slides.values():
+                os.unlink(i.filename)
+            del memmap_input_slides
+        else:
+            for i in input_slides.keys():
+                input_slides[i] = ((input_slides[i] - mean_list) / std_list) / input_max
     if gt_path:
         target_img_files = sorted(glob(join(path, gt_path, prefix + "*.png")))
         slide_names = [
@@ -367,3 +407,35 @@ def load_slides_as_dict(
         }
         return input_slides, target
     return input_slides
+
+
+def move_files_in_dir(src_dir: str, dst_dir: str, pattern=None) -> None:
+    # Check if both the are directories
+    if isdir(src_dir) and isdir(dst_dir):
+        # Iterate over all the files in source directory
+        if pattern is None:
+            files = glob(src_dir + "*")
+            with tqdm(total=len(files)) as pbar:
+                for file_path in files:
+                    # Move each file to destination Directory
+                    shutil.move(file_path, dst_dir)
+                    pbar.update(1)
+        if isinstance(pattern, str):
+            files = glob(src_dir + pattern)
+            with tqdm(total=len(files)) as pbar:
+                for file_path in files:
+                    # Move each file to destination Directory
+                    shutil.move(file_path, dst_dir)
+                    pbar.update(1)
+        if isinstance(pattern, list):
+            with tqdm(total=len(pattern)) as pbar:
+                for group in pattern:
+                    files = glob(src_dir + group)
+                    with tqdm(total=len(files)) as inner_pbar:
+                        for file_path in files:
+                            # Move each file to destination Directory
+                            shutil.move(file_path, dst_dir)
+                            inner_pbar.update(1)
+                    pbar.update(1)
+    else:
+        print("src_dir & dst_dir should be directories")

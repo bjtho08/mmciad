@@ -2,12 +2,22 @@
 PatchedModelCheckpoint()
 """
 import warnings
+import os
 import logging
 from logging.handlers import RotatingFileHandler
 from time import sleep
 
 import numpy as np
 from tensorflow.keras.callbacks import Callback
+
+class ValidationHook(Callback):
+    def __init__(self, validation_generator):
+        self.validation_generator = validation_generator
+    
+    def on_epoch_end(self, epoch, logs={}):
+        self.validation_generator.on_epoch_end()
+        #print("Called 'on_epoch_end()' for 'validation_generator'")
+
 
 
 class PatchedModelCheckpoint(Callback):
@@ -45,6 +55,7 @@ class PatchedModelCheckpoint(Callback):
         super(PatchedModelCheckpoint, self).__init__()
         self.monitor = monitor
         self.verbose = verbose
+        self.previous_filepath = None
         self.filepath = filepath
         self.save_best_only = save_best_only
         self.save_weights_only = save_weights_only
@@ -111,6 +122,8 @@ class PatchedModelCheckpoint(Callback):
                         self.best = current
 
                         saved_correctly = False
+                        if self.previous_filepath and os.path.exists(self.previous_filepath):
+                            os.remove(self.previous_filepath)
                         while not saved_correctly:
                             try:
                                 if self.save_weights_only:
@@ -118,6 +131,7 @@ class PatchedModelCheckpoint(Callback):
                                 else:
                                     self.model.save(filepath, overwrite=True)
                                 saved_correctly = True
+                                self.previous_filepath = filepath
                             except OSError as error:
                                 print('Error while trying to save the model: {}.\nTrying again...'.format(error))
                                 sleep(5)
@@ -129,6 +143,8 @@ class PatchedModelCheckpoint(Callback):
                 if self.verbose > 0:
                     print('\nEpoch %05d: saving model to %s' % (epoch + 1, filepath))
                 saved_correctly = False
+                if self.previous_filepath and os.path.exists(self.previous_filepath):
+                    os.remove(self.previous_filepath)
                 while not saved_correctly:
                     try:
                         if self.save_weights_only:
@@ -136,6 +152,7 @@ class PatchedModelCheckpoint(Callback):
                         else:
                             self.model.save(filepath, overwrite=True)
                         saved_correctly = True
+                        self.previous_filepath = filepath
                     except Exception as error:
                         print('Error while trying to save the model: {}.\nTrying again...'.format(error))
                         sleep(5)

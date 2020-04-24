@@ -3,22 +3,36 @@
 """
 import os
 import os.path as osp
+from typing import Union
 from collections import OrderedDict
+import datetime
 
-from keras_contrib.layers.advanced_activations.swish import Swish
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, TensorBoard, CSVLogger
+from tensorflow.keras.callbacks import (
+    EarlyStopping,
+    ReduceLROnPlateau,
+    TensorBoard,
+    CSVLogger,
+)
 from tensorflow.keras.losses import categorical_crossentropy
 
 # from keras_contrib.callbacks import DeadReluDetector
-#from keras.optimizers import SGD, Adadelta, Adagrad, Adam, Adamax, Nadam, RMSprop
+# from keras.optimizers import SGD, Adadelta, Adagrad, Adam, Adamax, Nadam, RMSprop
 from keras_tqdm import TQDMNotebookCallback
-#from keras_radam import RAdam
+
+# import talos
+
+# from keras_radam import RAdam
 
 # from sklearn.metrics.scorer import accuracy_score
 
-from mmciad.utils.callbacks import PatchedModelCheckpoint#, DeadReluDetector
+from .callbacks import PatchedModelCheckpoint  # , DeadReluDetector
 
-from .custom_loss import categorical_focal_loss, tversky_loss, weighted_loss
+from .custom_loss import (
+    categorical_focal_loss,
+    tversky_loss,
+    weighted_loss,
+    jaccard1_coef,
+)
 from .u_net import u_net
 
 IMG_ROWS, IMG_COLS, IMG_CHANNELS = (None, None, 3)
@@ -34,19 +48,31 @@ VERBOSE = 0
 # ****  train
 
 
+def get_string(name_or_str: Union[str, object]):
+    """Return a string describing the input.
+    If input is a string, then input is returned.
+    Otherwise, get the object name, if this exists,
+    or return the object string representation
+    """
+    if not isinstance(name_or_str, str):
+        output = getattr(name_or_str, "__name__", str(name_or_str))
+    else:
+        output = name_or_str
+    return output
+
+
 def value_as_string(input_dict):
-    output_dict = {}
+    """Return a dictionary where all values are converted into strings
+    """
+    output_dict = dict()
     for key, val in input_dict.items():
-        if hasattr(val, "__name__"):
-            output_dict[key] = val.__name__
-        elif isinstance(val, str):
-            output_dict[key] = val
-        else:
-            output_dict[key] = str(val)
+        output_dict[key] = get_string(val)
     return output_dict
 
 
-def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_generator, notebook=True):
+def talos_presets(
+    weight_path, cls_wgts, static_params, train_generator, val_generator, notebook=True
+):
     """Initialize a talos model object for hyper-parameter search
 
     :param weight_path: Path to the base weight folder
@@ -82,11 +108,12 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
         internal_params.update(static_params)
         internal_params.update(talos_params)
         path_elements = [
-            '{}_{}'.format(key, val.__name__)
-            if hasattr(val, '__name__')
-            else '{}_{}'.format(key, val) for key, val in talos_params.items()
+            "{}_{}".format(key, val.__name__)
+            if hasattr(val, "__name__")
+            else "{}_{}".format(key, val)
+            for key, val in talos_params.items()
         ]
-        path_elements.remove('{}_{}'.format("arch", talos_params["arch"]))
+        path_elements.remove("{}_{}".format("arch", talos_params["arch"]))
         if internal_params["loss_func"] == "cat_CE":
             loss_func = categorical_crossentropy
         elif internal_params["loss_func"] == "cat_FL":
@@ -112,35 +139,39 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
         if internal_params["class_weights"] is False:
             class_weights = [1 if k != 12 else 0 for k in cls_wgts.keys()]
         else:
-            class_weights = ([v for v in cls_wgts.values()],)
+            class_weights = list(cls_wgts.values())
 
         if str(internal_params["arch"]).lower() == "u-resnet":
             internal_params["maxpool"] = False
-            #internal_params["pretrain"] = 0
-            #internal_params["nb_filters_0"] = 32
-            #internal_params["depth"] = 3
+            # internal_params["pretrain"] = 0
+            # internal_params["nb_filters_0"] = 32
+            # internal_params["depth"] = 3
 
-        param_strings = value_as_string(internal_params)
-        model_base_path = osp.join(
-            weight_path,
-            internal_params["today_str"],
-            internal_params["arch"],
-            "{} {}".format(param_strings["loss_func"], param_strings["opt"]),
-        )
+        model_base_path = osp.join(weight_path, internal_params["date"])
 
         if not os.path.exists(model_base_path):
             os.makedirs(model_base_path, exist_ok=True)
+        basename = "model"
 
-        modelpath = osp.join(
-            model_base_path, "talos_U-net_model-" + '-'.join(path_elements) + ".h5"
-        )
-        log_path = osp.join(
-            "./logs",
-            static_params["today_str"],
-            internal_params["arch"],
-            "{} {}".format(param_strings["loss_func"], param_strings["opt"]),
-            *path_elements, ''
-        )
+        suffix = datetime.datetime.now().strftime("%y-%m-%d_%H%M%S")
+        model_handle = "_".join([basename, suffix])  # e.g. 'mylogfile_120508_171442'
+        modelpath = osp.join(model_base_path, model_handle)
+        log_path = osp.join("./logs", static_params["date"], model_handle, "")
+        with open(file=modelpath + ".cfg", mode="w") as f:
+            f.write("#" * 62 + "\n#" + " " * 60 + "#\n")
+            f.write("#" + f"Model Paramters for {model_handle}_*.h5".center(60) + "#\n")
+            f.write("#" + " " * 60 + "#\n" + "#" * 62 + "\n\n")
+            f.write("Static Parameters:\n")
+            for key, val in static_params.items():
+                f.write(f"  {key} = {get_string(val)}\n")
+            f.write("\nTalos Parameters:\n")
+            for key, val in talos_params.items():
+                f.write(f"  {key} = {get_string(val)}\n")
+            now = datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S.%f')
+            f.write(
+                f"\nTraining started: {now}\n"
+            )
+
         model_kwargs = {
             "shape": internal_params["shape"],
             "nb_filters": int(internal_params["nb_filters_0"]),
@@ -156,7 +187,7 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
             "arch": internal_params["arch"],
         }
 
-        csv_logger = CSVLogger("csvlog.csv", append=True)
+        csv_logger = CSVLogger(modelpath + ".fit.csv", append=True)
         if notebook:
             tqdm_progress = TQDMNotebookCallback(
                 metric_format="{name}: {value:0.4f}", leave_inner=True, leave_outer=True
@@ -177,16 +208,32 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
         reduce_lr_on_plateau = ReduceLROnPlateau(
             monitor="loss", factor=0.1, patience=5, min_lr=1e-8, verbose=1
         )
-        model_checkpoint = PatchedModelCheckpoint(
-            modelpath, verbose=0, monitor="loss", save_best_only=True
+        jaccard_model_checkpoint = PatchedModelCheckpoint(
+            modelpath + "_epoch_{epoch}_val_jacc1_{val_jaccard1_coef:0.4f}.h5",
+            verbose=0,
+            monitor="val_jaccard1_coef",
+            save_best_only=True,
         )
-        # logger_callback = WriteLog(internal_params)
+        loss_model_checkpoint = PatchedModelCheckpoint(
+            modelpath + "_epoch_{epoch}_val_loss_{val_loss:0.4f}.h5",
+            verbose=0,
+            monitor="val_loss",
+            save_best_only=True,
+        )
+
+        # talos_path = osp.join("talos", internal_params["date"])
+        # gamify_callback = talos.utils.ExperimentLogCallback(talos_path, talos_params)
         # dead_relus = DeadReluDetector(x_train=train_generator)
 
-        model_callbacks = [csv_logger, tb_callback]
+        model_callbacks = [csv_logger, tb_callback]  # , gamify_callback]
         if notebook:
             model_callbacks.append(tqdm_progress)
-        opti_callbacks = [early_stopping, reduce_lr_on_plateau, model_checkpoint]
+        opti_callbacks = [
+            early_stopping,
+            reduce_lr_on_plateau,
+            loss_model_checkpoint,
+            jaccard_model_checkpoint,
+        ]
 
         if internal_params["pretrain"] != 0:
             print(
@@ -238,21 +285,25 @@ def talos_presets(weight_path, cls_wgts, static_params, train_generator, val_gen
                 callbacks=model_callbacks + opti_callbacks,
             )
         else:
-            print("No layers frozen at start\nclass weights: {}".format(class_weights))
+            # print(
+            #   "No layers frozen at start\nclass weights: {}".format(class_weights)
+            # )
             model = u_net(**model_kwargs)
+            # run_opts = tf.compat.v1.RunOptions(
+            #   report_tensor_allocations_upon_oom = True
+            # )
 
             model.compile(
                 loss=loss_func,
                 optimizer=internal_params["opt"](internal_params["lr"]),
-                metrics=["acc"],
-                # weighted_metrics=["acc"],
+                metrics=["acc", jaccard1_coef],
+                # options=run_opts,
             )
 
             history = model.fit_generator(
                 generator=train_generator,
                 epochs=internal_params["nb_epoch"],
                 validation_data=val_generator,
-                use_multiprocessing=True,
                 workers=30,
                 class_weight=class_weights,
                 verbose=internal_params["verbose"],

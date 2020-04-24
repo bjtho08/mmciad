@@ -138,6 +138,7 @@ def level_block(
                 strides=2,
                 padding="same",
                 kernel_initializer=init,
+                name="block{}_d_DownSamplingConv2D".format(level)
             )(n)
             if not res
             else n
