@@ -1,39 +1,64 @@
 """Initialize a talos model object for hyper-parameter search
 
 """
+import datetime
 import os
 import os.path as osp
-from typing import Union
 from collections import OrderedDict
-import datetime
+from typing import Union
 
+import tensorflow_addons as tfa
+from keras_radam import RAdam
+from tensorflow.keras.activations import selu, sigmoid, tanh
 from tensorflow.keras.callbacks import (
+    CSVLogger,
     EarlyStopping,
     ReduceLROnPlateau,
     TensorBoard,
-    CSVLogger,
 )
-from tensorflow.keras.losses import categorical_crossentropy
+from tensorflow.keras.layers import (
+    ELU,
+    LeakyReLU,
+    PReLU,
+    ReLU,
+    Softmax,
+    ThresholdedReLU,
+)
+from tensorflow.keras.losses import (
+    binary_crossentropy,
+    categorical_crossentropy,
+    mae,
+    mse,
+)
 
 # from keras_contrib.callbacks import DeadReluDetector
-# from keras.optimizers import SGD, Adadelta, Adagrad, Adam, Adamax, Nadam, RMSprop
-from keras_tqdm import TQDMNotebookCallback
+from tensorflow.keras.optimizers import (
+    SGD,
+    Adadelta,
+    Adagrad,
+    Adam,
+    Adamax,
+    Nadam,
+    RMSprop,
+)
 
-# import talos
-
-# from keras_radam import RAdam
-
-# from sklearn.metrics.scorer import accuracy_score
+from keras_contrib.layers.advanced_activations.swish import Swish
 
 from .callbacks import PatchedModelCheckpoint  # , DeadReluDetector
-
 from .custom_loss import (
     categorical_focal_loss,
+    jaccard1_coef,
+    jaccard1_loss,
+    jaccard2_loss,
     tversky_loss,
     weighted_loss,
-    jaccard1_coef,
 )
 from .u_net import u_net
+
+# from keras_tqdm import TQDMNotebookCallback
+# import talos
+# from sklearn.metrics.scorer import accuracy_score
+
 
 IMG_ROWS, IMG_COLS, IMG_CHANNELS = (None, None, 3)
 # architecture params
@@ -44,6 +69,9 @@ SHAPE = (IMG_ROWS, IMG_COLS, IMG_CHANNELS)
 BATCH_SIZE = 16
 NB_EPOCH = 200
 VERBOSE = 0
+
+# **** DEBUGGING
+CRASH_COUNT = 0
 
 # ****  train
 
@@ -70,8 +98,99 @@ def value_as_string(input_dict):
     return output_dict
 
 
-def talos_presets(
-    weight_path, cls_wgts, static_params, train_generator, val_generator, notebook=True
+def get_loss_function(name: str, cls_wgts=None):
+    """ Retrieve the requested loss function
+
+    Available functions:
+    --------------------
+    mse, mae, binary_crossentropy, jaccard1_loss,
+    jaccard2_loss, categorical_crossentropy,
+    tversky_loss, categorical_focal_loss
+    """
+    func_dict = {
+        "mse": mse,
+        "mae": mae,
+        "binary_CE": binary_crossentropy,
+        "cat_CE": categorical_crossentropy,
+        "cat_FL": categorical_focal_loss(),
+        "tversky_loss": tversky_loss,
+        "w_cat_CE": weighted_loss(categorical_crossentropy, cls_wgts),
+        "w_cat_FL": weighted_loss(categorical_focal_loss, cls_wgts),
+        "w_TL": weighted_loss(tversky_loss, cls_wgts),
+        "jaccard1_loss": jaccard1_loss,
+        "jaccard2_loss": jaccard2_loss,
+    }
+    loss_func = func_dict.get(name, None)
+    if loss_func is None:
+        try:
+            loss_func = globals()[name]
+        except KeyError:
+            raise NameError(f"Wrong loss function name ({name})")
+
+    loss_func.__name__ = name
+    return loss_func
+
+
+def get_act_function(name: str):
+    """ Retrieve the requested activation function
+
+    Available functions:
+    --------------------
+    swish, relu, elu, leaky_relu, prelu, softmax,
+    thresholded_relu, tanh, selu, sigmoid
+    """
+    func_dict = {
+        "swish": Swish,
+        "relu": ReLU,
+        "elu": ELU,
+        "leaky_relu": LeakyReLU,
+        "prelu": PReLU,
+        "softmax": Softmax,
+        "thresholded_relu": ThresholdedReLU,
+        "tanh": tanh,
+        "selu": selu,
+        "sigmoid": sigmoid,
+    }
+    act_func = func_dict.get(name, None)
+    if act_func is None:
+        act_func = ReLU
+        raise Warning("Uknown activation, falling back to ReLU")
+    return act_func
+
+
+def get_opt_function(name: str):
+    """ Retrieve the requested optimizer
+
+    Available functions:
+    --------------------
+    adam, radam, nadam, sgd, rmsprop, adadelta,
+    adagrad, adamax
+    """
+    func_dict = {
+        "adam": Adam,
+        "radam": RAdam,
+        "nadam": Nadam,
+        "sgd": SGD,
+        "rmsprop": RMSprop,
+        "adadelta": Adadelta,
+        "adagrad": Adagrad,
+        "adamax": Adamax,
+    }
+    opt_func = func_dict.get(name, None)
+    if opt_func is None:
+        opt_func = Adam
+        raise Warning("Uknown optimizer, falling back to Adam")
+    return opt_func
+
+
+def prepare_for_talos(
+    weight_path,
+    cls_wgts,
+    static_params,
+    train_generator,
+    val_generator,
+    notebook=True,
+    debug=False,
 ):
     """Initialize a talos model object for hyper-parameter search
 
@@ -107,35 +226,18 @@ def talos_presets(
         internal_params = OrderedDict()
         internal_params.update(static_params)
         internal_params.update(talos_params)
-        path_elements = [
-            "{}_{}".format(key, val.__name__)
-            if hasattr(val, "__name__")
-            else "{}_{}".format(key, val)
-            for key, val in talos_params.items()
-        ]
-        path_elements.remove("{}_{}".format("arch", talos_params["arch"]))
-        if internal_params["loss_func"] == "cat_CE":
-            loss_func = categorical_crossentropy
-        elif internal_params["loss_func"] == "cat_FL":
-            cat_focal_loss = categorical_focal_loss()
-            loss_func = cat_focal_loss
-        elif internal_params["loss_func"] in globals():
-            loss_func = globals()[internal_params["loss_func"]]
-        elif hasattr(internal_params["loss_func"], "__call__"):
-            loss_func = internal_params["loss_func"]
-        elif internal_params["loss_func"] == "w_cat_CE":
-            loss_func = weighted_loss(categorical_crossentropy, cls_wgts)
-            loss_func.__name__ = internal_params["loss_func"]
-        elif internal_params["loss_func"] == "w_cat_FL":
-            loss_func = weighted_loss(categorical_focal_loss, cls_wgts)
-            loss_func.__name__ = internal_params["loss_func"]
-        elif internal_params["loss_func"] == "w_TL":
-            loss_func = weighted_loss(tversky_loss, cls_wgts)
-            loss_func.__name__ = internal_params["loss_func"]
-        else:
-            raise NameError("Wrong loss function name")
-        # mse, mae, binary_crossentropy, jaccard2_loss, categorical_crossentropy,
-        # tversky_loss, categorical_focal_loss
+        loss_func = get_loss_function(internal_params["loss_func"])
+        act_func = get_act_function(internal_params["act"])
+        opt_func = get_opt_function(internal_params["opt"])
+
+        if debug:
+            internal_params["steps_per_epoch"] = 2
+            internal_params["nb_epoch"] = 2
+            global CRASH_COUNT  # pylint: disable=global-statement
+            CRASH_COUNT += 1
+            if CRASH_COUNT == 3:
+                raise KeyboardInterrupt()
+
         if internal_params["class_weights"] is False:
             class_weights = [1 if k != 12 else 0 for k in cls_wgts.keys()]
         else:
@@ -157,7 +259,7 @@ def talos_presets(
         model_handle = "_".join([basename, suffix])  # e.g. 'mylogfile_120508_171442'
         modelpath = osp.join(model_base_path, model_handle)
         log_path = osp.join("./logs", static_params["date"], model_handle, "")
-        with open(file=modelpath + ".cfg", mode="w") as f:
+        with open(file=modelpath + ".cfg", mode="w") as f: # pylint: disable=invalid-name
             f.write("#" * 62 + "\n#" + " " * 60 + "#\n")
             f.write("#" + f"Model Paramters for {model_handle}_*.h5".center(60) + "#\n")
             f.write("#" + " " * 60 + "#\n" + "#" * 62 + "\n\n")
@@ -167,10 +269,8 @@ def talos_presets(
             f.write("\nTalos Parameters:\n")
             for key, val in talos_params.items():
                 f.write(f"  {key} = {get_string(val)}\n")
-            now = datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S.%f')
-            f.write(
-                f"\nTraining started: {now}\n"
-            )
+            now = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S.%f")
+            f.write(f"\nTraining started: {now}\n")
 
         model_kwargs = {
             "shape": internal_params["shape"],
@@ -179,7 +279,7 @@ def talos_presets(
             "depth": internal_params["depth"],
             "maxpool": internal_params["maxpool"],
             "initialization": internal_params["init"],
-            "activation": internal_params["act"],
+            "activation": act_func,
             "dropout": internal_params["dropout"],
             "output_channels": internal_params["num_cls"],
             "batchnorm": internal_params["batchnorm"],
@@ -189,16 +289,16 @@ def talos_presets(
 
         csv_logger = CSVLogger(modelpath + ".fit.csv", append=True)
         if notebook:
-            tqdm_progress = TQDMNotebookCallback(
-                metric_format="{name}: {value:0.4f}", leave_inner=True, leave_outer=True
-            )
+            tqdm_progress = tfa.callbacks.TQDMProgressBar()
+        #            tqdm_progress = TQDMNotebookCallback(
+        #                metric_format="{name}: {value:0.4f}", leave_inner=True, leave_outer=True
+        #            )
         tb_callback = TensorBoard(
             log_dir=log_path,
             histogram_freq=0,
-            batch_size=internal_params["batch_size"],
             write_graph=True,
             write_grads=False,
-            write_images=True,
+            write_images=False,
             embeddings_freq=0,
             update_freq="epoch",
         )
@@ -242,7 +342,7 @@ def talos_presets(
             model = u_net(**model_kwargs)
             model.compile(
                 loss=loss_func,
-                optimizer=internal_params["opt"](internal_params["lr"]),
+                optimizer=opt_func(internal_params["lr"]),
                 metrics=["acc"],
                 # weighted_metrics=["acc"],
             )
@@ -268,13 +368,13 @@ def talos_presets(
             print("layers unfrozen\n")
             model.compile(
                 loss=loss_func,
-                optimizer=internal_params["opt"](internal_params["lr"]),
+                optimizer=opt_func(internal_params["lr"]),
                 metrics=["acc"],
                 # weighted_metrics=["acc"],
             )
 
-            history = model.fit_generator(
-                generator=train_generator,
+            history = model.fit(
+                x=train_generator,
                 epochs=internal_params["nb_epoch"],
                 initial_epoch=internal_params["nb_frozen"],
                 validation_data=val_generator,
@@ -289,23 +389,21 @@ def talos_presets(
             #   "No layers frozen at start\nclass weights: {}".format(class_weights)
             # )
             model = u_net(**model_kwargs)
-            # run_opts = tf.compat.v1.RunOptions(
-            #   report_tensor_allocations_upon_oom = True
-            # )
 
             model.compile(
                 loss=loss_func,
-                optimizer=internal_params["opt"](internal_params["lr"]),
+                optimizer=opt_func(internal_params["lr"]),
                 metrics=["acc", jaccard1_coef],
-                # options=run_opts,
             )
 
-            history = model.fit_generator(
-                generator=train_generator,
+            history = model.fit(
+                x=train_generator,
                 epochs=internal_params["nb_epoch"],
                 validation_data=val_generator,
                 workers=30,
-                class_weight=class_weights,
+                steps_per_epoch=internal_params.get("steps_per_epoch", None),
+                validation_steps=internal_params.get("steps_per_epoch", None),
+                # class_weight=class_weights,
                 verbose=internal_params["verbose"],
                 callbacks=model_callbacks + opti_callbacks,
             )

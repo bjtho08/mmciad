@@ -4,20 +4,22 @@ PatchedModelCheckpoint()
 import warnings
 import os
 import logging
-from logging.handlers import RotatingFileHandler
 from time import sleep
 
 import numpy as np
 from tensorflow.keras.callbacks import Callback
+import tensorflow.keras.backend as K
+
 
 class ValidationHook(Callback):
     def __init__(self, validation_generator):
+        super(ValidationHook, self).__init__()
         self.validation_generator = validation_generator
-    
-    def on_epoch_end(self, epoch, logs={}):
-        self.validation_generator.on_epoch_end()
-        #print("Called 'on_epoch_end()' for 'validation_generator'")
 
+    def on_epoch_end(self, epoch, logs=None):
+        logs = {} if logs is None else logs
+        self.validation_generator.on_epoch_end()
+        # print("Called 'on_epoch_end()' for 'validation_generator'")
 
 
 class PatchedModelCheckpoint(Callback):
@@ -49,9 +51,16 @@ class PatchedModelCheckpoint(Callback):
         period: Interval (number of epochs) between checkpoints.
     """
 
-    def __init__(self, filepath, monitor='val_loss', verbose=0,
-                 save_best_only=False, save_weights_only=False,
-                 mode='auto', period=1):
+    def __init__(
+        self,
+        filepath,
+        monitor="val_loss",
+        verbose=0,
+        save_best_only=False,
+        save_weights_only=False,
+        mode="auto",
+        period=1,
+    ):
         super(PatchedModelCheckpoint, self).__init__()
         self.monitor = monitor
         self.verbose = verbose
@@ -63,26 +72,24 @@ class PatchedModelCheckpoint(Callback):
         self.epochs_since_last_save = 0
         self.logger = logging.getLogger("Training Log")
 
-        if mode not in ['auto', 'min', 'max']:
+        if mode not in ["auto", "min", "max"]:
             warnings.warn(
-                'ModelCheckpoint mode %s is unknown, '
-                'fallback to auto mode.' % (mode),
-                RuntimeWarning
+                "ModelCheckpoint mode %s is unknown, fallback to auto mode." % (mode),
+                RuntimeWarning,
             )
             self.logger.warning(
-                'ModelCheckpoint mode %s is unknown, fallback to auto mode.',
-                mode
+                "ModelCheckpoint mode %s is unknown, fallback to auto mode.", mode
             )
-            mode = 'auto'
+            mode = "auto"
 
-        if mode == 'min':
+        if mode == "min":
             self.monitor_op = np.less
             self.best = np.Inf
-        elif mode == 'max':
+        elif mode == "max":
             self.monitor_op = np.greater
             self.best = -np.Inf
         else:
-            if 'acc' in self.monitor or self.monitor.startswith('fmeasure'):
+            if "acc" in self.monitor or self.monitor.startswith("fmeasure"):
                 self.monitor_op = np.greater
                 self.best = -np.Inf
             else:
@@ -99,30 +106,41 @@ class PatchedModelCheckpoint(Callback):
                 current = logs.get(self.monitor)
                 if current is None:
                     warnings.warn(
-                        'Can save best model only with %s available, '
-                        'skipping.' % (self.monitor), RuntimeWarning
+                        "Can save best model only with %s available, "
+                        "skipping." % (self.monitor),
+                        RuntimeWarning,
                     )
                     self.logger.warning(
                         "Can save best model only with %s available, skipping.",
-                        self.monitor
+                        self.monitor,
                     )
                 else:
                     if self.monitor_op(current, self.best):
                         if self.verbose > 0:
                             print(
-                                '\nEpoch %05d: %s improved from %0.5f to %0.5f,'
-                                ' saving model to %s'
-                                % (epoch + 1, self.monitor, self.best,
-                                    current, filepath)
+                                "\nEpoch %05d: %s improved from %0.5f to %0.5f,"
+                                " saving model to %s"
+                                % (
+                                    epoch + 1,
+                                    self.monitor,
+                                    self.best,
+                                    current,
+                                    filepath,
+                                )
                             )
                         self.logger.info(
-                            "\nEpoch %5d: %s improved from %0.5f to %0.5f, saving model to %s",
-                            epoch + 1, self.monitor, self.best, current, filepath
+                            "\nEpoch %5d: %s improved from %0.5f to %0.5f, saving ...",
+                            epoch + 1,
+                            self.monitor,
+                            self.best,
+                            current,
                         )
                         self.best = current
 
                         saved_correctly = False
-                        if self.previous_filepath and os.path.exists(self.previous_filepath):
+                        if self.previous_filepath and os.path.exists(
+                            self.previous_filepath
+                        ):
                             os.remove(self.previous_filepath)
                         while not saved_correctly:
                             try:
@@ -133,15 +151,20 @@ class PatchedModelCheckpoint(Callback):
                                 saved_correctly = True
                                 self.previous_filepath = filepath
                             except OSError as error:
-                                print('Error while trying to save the model: {}.\nTrying again...'.format(error))
+                                print(
+                                    f"Error while trying to save the model: {error}." +
+                                    "\nTrying again..."
+                                )
                                 sleep(5)
                     else:
                         if self.verbose > 0:
-                            print('\nEpoch %05d: %s did not improve from %0.5f' %
-                                  (epoch + 1, self.monitor, self.best))
+                            print(
+                                "\nEpoch %05d: %s did not improve from %0.5f"
+                                % (epoch + 1, self.monitor, self.best)
+                            )
             else:
                 if self.verbose > 0:
-                    print('\nEpoch %05d: saving model to %s' % (epoch + 1, filepath))
+                    print("\nEpoch %05d: saving model to %s" % (epoch + 1, filepath))
                 saved_correctly = False
                 if self.previous_filepath and os.path.exists(self.previous_filepath):
                     os.remove(self.previous_filepath)
@@ -153,8 +176,11 @@ class PatchedModelCheckpoint(Callback):
                             self.model.save(filepath, overwrite=True)
                         saved_correctly = True
                         self.previous_filepath = filepath
-                    except Exception as error:
-                        print('Error while trying to save the model: {}.\nTrying again...'.format(error))
+                    except OSError as error:
+                        print(
+                            f"Error while trying to save the model: {error}." +
+                            "\nTrying again..."
+                        )
                         sleep(5)
 
 
@@ -180,7 +206,7 @@ class DeadReluDetector(Callback):
     def is_relu_layer(layer):
         # Should work for all layers with relu
         # activation. Tested for Dense and Conv2D
-        return layer.get_config().get('activation', None) == 'relu'
+        return layer.get_config().get("activation", None) == "relu"
 
     def get_relu_activations(self):
         model_input = self.model.input
@@ -192,15 +218,16 @@ class DeadReluDetector(Callback):
         for index, layer in enumerate(self.model.layers):
             if not layer.get_weights():
                 continue
-            funcs[index] = K.function(model_input
-                                      + [K.learning_phase()], [layer.output])
+            funcs[index] = K.function(
+                model_input + [K.learning_phase()], [layer.output]
+            )
 
         if is_multi_input:
             list_inputs = []
             list_inputs.extend(self.x_train)
-            list_inputs.append(1.)
+            list_inputs.append(1.0)
         else:
-            list_inputs = [self.x_train, 1.]
+            list_inputs = [self.x_train, 1.0]
 
         layer_outputs = {}
         for index, func in funcs.items():
@@ -214,9 +241,11 @@ class DeadReluDetector(Callback):
 
                 # with kernel and bias, the weights are saved as a list [W, b].
                 # If only weights, it is [W]
-                if type(layer_weight) is not list:
-                    raise ValueError("'Layer_weight' should be a list, "
-                                     "but was {}".format(type(layer_weight)))
+                if not isinstance(layer_weight, list):
+                    raise ValueError(
+                        "'Layer_weight' should be a list, "
+                        "but was {}".format(type(layer_weight))
+                    )
 
                 # there are no weights for current layer; skip it
                 # this is only legitimate if layer is "Activation"
@@ -224,17 +253,11 @@ class DeadReluDetector(Callback):
                     continue
 
                 layer_weight_shape = np.shape(layer_weight[0])
-                yield [layer_index,
-                       layer_activations,
-                       layer_name,
-                       layer_weight_shape]
-
+                yield [layer_index, layer_activations, layer_name, layer_weight_shape]
 
     def on_epoch_end(self, epoch, logs=None):
         if hasattr(self.x_train, "batch_size"):
-            dim = self.x_train.dim
             batches = len(self.x_train)
-            total = batches * self.x_train.batch_size
             train = []
             for batch in range(batches):
                 x, _ = self.x_train[batch]
@@ -253,7 +276,7 @@ class DeadReluDetector(Callback):
             act_len = len(shape_act)
 
             # should work for both Conv and Flat
-            if K.image_data_format() == 'channels_last':
+            if K.image_data_format() == "channels_last":
                 # features in last axis
                 axis_filter = -1
             else:
@@ -265,18 +288,17 @@ class DeadReluDetector(Callback):
 
             axis = []
             for i in range(act_len):
-                if (i != axis_filter) and (i != (len(shape_act) + axis_filter)):
+                if i not in (axis_filter, len(shape_act) + axis_filter):
                     axis.append(i)
             axis = tuple(axis)
 
             dead_neurons = np.sum(np.sum(activation_values, axis=axis) == 0)
 
             dead_neurons_share = float(dead_neurons) / float(total_featuremaps)
-            if ((self.verbose and dead_neurons > 0)
-                    or dead_neurons_share >= self.dead_neurons_share_threshold):
-                str_warning = ('Layer {} (#{}) has {} '
-                               'dead neurons ({:.2%})!').format(layer_name,
-                                                                layer_index,
-                                                                dead_neurons,
-                                                                dead_neurons_share)
+            if (
+                self.verbose and dead_neurons > 0
+            ) or dead_neurons_share >= self.dead_neurons_share_threshold:
+                str_warning = (
+                    "Layer {} (#{}) has {} " "dead neurons ({:.2%})!"
+                ).format(layer_name, layer_index, dead_neurons, dead_neurons_share)
                 print(str_warning)
