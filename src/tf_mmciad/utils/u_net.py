@@ -1,6 +1,5 @@
 """U-Net model implementation with keras"""
 
-import tensorflow as tf
 from tensorflow.keras import Model
 
 # from keras.layers.advanced_activations import LeakyReLU
@@ -12,7 +11,7 @@ from tensorflow.keras.layers import (
     Layer,
     Input,
     ReLU,
-#    Activation,
+    # Activation,
     Concatenate,
     Conv2D,
     Conv2DTranspose,
@@ -22,6 +21,9 @@ from tensorflow.keras.layers import (
     Dropout,
     BatchNormalization,
 )
+from tensorflow.python.keras.layers.core import Dense, Flatten
+from tf_mmciad.model.crfrnnlayer import CrfRnnLayer
+from tf_mmciad.model.layers import MyConv2D
 
 
 def _shortcut(input_: Layer, residual: Layer):
@@ -40,7 +42,7 @@ def _shortcut(input_: Layer, residual: Layer):
             strides=(2, 2),
             padding="same",
             kernel_initializer="he_normal",
-            name="shortcut_{}".format(sc_base_name),
+            name=f"shortcut_{sc_base_name}",
         )(shortcut)
     if "_u" in residual.name:
         shortcut = Conv2D(
@@ -49,24 +51,23 @@ def _shortcut(input_: Layer, residual: Layer):
             strides=(1, 1),
             padding="same",
             kernel_initializer="he_normal",
-            name="shortcut_{}".format(sc_base_name),
+            name=f"shortcut_{sc_base_name}",
         )(shortcut)
-    return add([residual, shortcut], name="add_{}".format(sc_base_name))
+    return add([residual, shortcut], name=f"add_{sc_base_name}")
 
 
 def batchnorm_activate(m, bn, level, acti, iter_):
-    n = BatchNormalization(name="block{}_bn{}".format(level, iter_))(m) if bn else m
+    n = BatchNormalization(name=f"block{level}_bn{iter_}")(m) if bn else m
     try:
         n = acti(
-            name="block{}_{}{}".format(level, acti.__name__, iter_), trainable=True
+            name=f"block{level}_{acti.__name__}{iter_}", trainable=True
         )(n)
     except TypeError:
-        n = acti(name="block{}_{}{}".format(level, acti.__name__, iter_))(n)
+        n = acti(name=f"block{level}_{acti.__name__}{iter_}")(n)
     return n
 
 
 def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, strides=1, do=0):
-    conv_base_name = "block{}_conv{}"
     n = batchnorm_activate(m, bn, level, acti, 1)
     n = Conv2D(
         filters=nb_filters,
@@ -74,7 +75,7 @@ def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, strides=1, do=0)
         strides=strides,
         padding="same",
         kernel_initializer=init,
-        name=conv_base_name.format(level, 1),
+        name=f"block{level}_conv1",
     )(n)
     n = batchnorm_activate(n, bn, level, acti, 2)
     n = Conv2D(
@@ -82,7 +83,7 @@ def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, strides=1, do=0)
         kernel_size=conv_size,
         padding="same",
         kernel_initializer=init,
-        name=conv_base_name.format(level, 2),
+        name=f"block{level}_conv2",
     )(n)
     n = batchnorm_activate(n, bn, level, acti, 3)
     n = Conv2D(
@@ -90,36 +91,36 @@ def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, strides=1, do=0)
         kernel_size=1,
         padding="same",
         kernel_initializer=init,
-        name=conv_base_name.format(level, 3),
+        name=f"block{level}_conv3",
     )(n)
-    n = Dropout(do, name="block{}_drop".format(level)) if do else n
+    n = Dropout(do, name=f"block{level}_drop") if do else n
     return _shortcut(m, n)
 
 
 def conv_block(m, nb_filters, conv_size, init, acti, bn, level, strides=None, do=0):
     _ = strides
-    n = Conv2D(
+    n = MyConv2D(
         nb_filters,
         conv_size,
-        padding="same",
+        padding=(1, 1),
         kernel_initializer=init,
-        name="block{}_conv1".format(level),
+        name=f"block{level}_conv1",
     )(m)
     n = batchnorm_activate(n, bn, level, acti, 1)
-    n = Dropout(do, name="block{}_drop1".format(level))(n) if do else n
-    n = Conv2D(
+    n = Dropout(do, name=f"block{level}_drop1")(n) if do else n
+    n = MyConv2D(
         nb_filters,
         conv_size,
-        padding="same",
+        padding=(1, 1),
         kernel_initializer=init,
-        name="block{}_conv2".format(level),
+        name=f"block{level}_conv2",
     )(n)
     n = batchnorm_activate(n, bn, level, acti, 2)
     return n
 
 
 def level_block(
-    m, nb_filters, conv_size, init, depth, inc, acti, do, bn, mp, up, level=1, res=False
+    m, nb_filters, conv_size, init, depth, inc, acti, do, bn, mp, up, level=1, res=False, enc_only=False,
 ):
     if res:
         block = bottleneck
@@ -130,20 +131,20 @@ def level_block(
             m, nb_filters, conv_size, init, acti, bn, str(level) + "_d", strides=2
         )
         m = (
-            MaxPooling2D(pool_size=(2, 2), name="block{}_d_MaxPool".format(level))(n)
+            MaxPooling2D(pool_size=(2, 2), name=f"block{level}_d_MaxPool")(n)
             if mp
-            else Conv2D(
+            else MyConv2D(
                 nb_filters,
                 conv_size,
                 strides=2,
-                padding="same",
+                padding=(1, 1),
                 kernel_initializer=init,
-                name="block{}_d_DownSamplingConv2D".format(level)
+                name=f"block{level}_d_DownSamplingConv2D",
             )(n)
             if not res
             else n
         )
-        m = Dropout(do, name="block{}_d_drop2".format(level))(m) if do else m
+        m = Dropout(do, name=f"block{level}_d_drop2")(m) if do else m
         m = level_block(
             m,
             int(inc * nb_filters),
@@ -158,16 +159,18 @@ def level_block(
             up,
             level + 1,
             res,
+            enc_only,
         )
-        if up:
-            m = UpSampling2D(size=(2, 2), name="block{}_u_upsampling".format(level))(m)
-        else:
-            m = Conv2DTranspose(
-                nb_filters, 3, strides=2, padding="same", kernel_initializer=init
-            )(m)
-            m = acti(name="block{}_{}1".format(level, acti.__name__))(m)
-        n = Concatenate(name="Concatenate_{}".format(depth))([n, m])
-        m = block(n, nb_filters, conv_size, init, acti, bn, str(level) + "_u")
+        if not enc_only:
+            if up:
+                m = UpSampling2D(size=(2, 2), name=f"block{level}_u_upsampling")(m)
+            else:
+                m = Conv2DTranspose(
+                    nb_filters, 3, strides=2, padding="same", kernel_initializer=init
+                )(m)
+                m = acti(name=f"block{level}_{acti.__name__}1")(m)
+            n = Concatenate(name=f"Concatenate_{depth}")([n, m])
+            m = block(n, nb_filters, conv_size, init, acti, bn, str(level) + "_u")
     else:
         m = block(
             m, nb_filters, conv_size, init, acti, bn, str(level) + "_bottom", 2, do
@@ -190,6 +193,8 @@ def u_net(
     upconv=True,
     sigma_noise=0,
     arch="U-Net",
+    crf=False,
+    encode_only=False,
     **kwargs,
 ):
     """U-Net model.
@@ -257,24 +262,45 @@ def u_net(
         maxpool,
         upconv,
         res=resnet,
+        enc_only=encode_only,
     )
-    o = UpSampling2D(size=(2, 2), name="post_upsampling")(o) if resnet else o
-    o = (
-        Conv2D(
-            filters=nb_filters,
-            kernel_size=conv_size,
-            padding="same",
-            kernel_initializer=initialization,
-            name="post_conv",
-        )(o)
-        if resnet
-        else o
-    )
-    o = Concatenate(name="Concatenate_out")([o, m]) if resnet else o
-    o = batchnorm_activate(o, batchnorm, "out", activation, 1) if resnet else o
-    if sigma_noise > 0:
-        o = GaussianNoise(sigma_noise, name="GaussianNoise_preout")(o)
-    o = Conv2D(output_channels, 1, activation="softmax", name="conv_out")(o)
+    if not encode_only:
+        o = UpSampling2D(size=(2, 2), name="post_upsampling")(o) if resnet else o
+        o = (
+            Conv2D(
+                filters=nb_filters,
+                kernel_size=conv_size,
+                padding="same",
+                kernel_initializer=initialization,
+                name="post_conv",
+            )(o)
+            if resnet
+            else o
+        )
+        o = Concatenate(name="Concatenate_out")([o, m]) if resnet else o
+        o = batchnorm_activate(o, batchnorm, "out", activation, 1) if resnet else o
+        if sigma_noise > 0:
+            o = GaussianNoise(sigma_noise, name="GaussianNoise_preout")(o)
+        o = Conv2D(output_channels, 1, activation="softmax", name="conv_out")(o)
+        o = (
+            CrfRnnLayer(
+                image_dims=shape[:2],
+                num_classes=21,
+                theta_alpha=160.0,
+                theta_beta=3.0,
+                theta_gamma=3.0,
+                num_iterations=10,
+                name="crfrnn",
+            )([o, i])
+            if crf
+            else o
+        )
+    else:
+        o = MaxPooling2D(pool_size=(2, 2))(o)
+        o = Flatten()(o)
+        o = Dense(4096, activation="relu", name="dense_1")(o)
+        o = Dense(4096, activation="relu", name="dense_2")(o)
+        o = Dense(output_channels, activation="softmax", name="dense_out")(o)
     modelname = (
         "BS" + arch
         if batchnorm and activation.__name__ == "Swish"
@@ -282,4 +308,6 @@ def u_net(
         if batchnorm
         else arch
     )
+    if encode_only:
+        modelname += "encoding_path"
     return Model(inputs=i, outputs=o, name=modelname)

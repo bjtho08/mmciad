@@ -16,6 +16,7 @@ AUTOTUNE = tf.data.experimental.AUTOTUNE
 class DataGenerator(tf.keras.utils.Sequence):
     "Generates data for Keras"
 
+
     def __init__(
         self,
         path,
@@ -52,7 +53,7 @@ class DataGenerator(tf.keras.utils.Sequence):
         if self.id_list is None:
             self.id_list = [
                 osp.splitext(osp.basename(i))[0]
-                for i in glob(osp.join(self.path, "*.tif"))
+                for i in glob(osp.join(self.path, "*.png"))
             ]
 
         self.__selftest()
@@ -107,16 +108,16 @@ class DataGenerator(tf.keras.utils.Sequence):
         # Generate data
         for i, sample_id in enumerate(id_list_temp):
             # Store sample
-            input_img_batch[i] = imread(self.path + sample_id + ".tif")
+            input_img_batch[i] = imread(self.path + sample_id + ".png")
             input_img_batch = input_img_batch.astype(np.float32, copy=False)
             input_img_batch[i] = (input_img_batch[i] - self.means) / self.stds
             # input_img_batch[i] = (input_img_batch[i] - self.x_min) / (
             #    self.x_max - self.x_min
             # )
             # Store class
-            target_batch[i,] = imread(self.path + "gt/" + sample_id + ".tif").astype(
-                "int64"
-            )
+            target_batch[i,] = imread(self.path + "gt/" + sample_id + ".png").astype(
+                "uint8"
+            )[..., :3]
             for cls_, color in enumerate(self.color_dict.values()):
                 target_batch_class[i] += np.expand_dims(
                     np.logical_and.reduce(target_batch[i,] == color, axis=-1) * cls_,
@@ -129,9 +130,8 @@ class DataGenerator(tf.keras.utils.Sequence):
                 )
         if self.augment:
             dtype = input_img_batch.dtype
-            assert np.issubdtype(
-                dtype, np.floating
-            ), f"img dtype, {dtype}, does not match np.floating"
+            if not np.issubdtype(dtype, np.floating):
+                raise ValueError(f"img dtype, {dtype}, does not match np.floating")
             input_img_batch, target_batch_class = augmentor(
                 input_img_batch, target_batch_class
             )
@@ -142,11 +142,11 @@ class DataGenerator(tf.keras.utils.Sequence):
         if self.batch_size == 1:
             return (
                 np.squeeze(np.asarray(input_img_batch, dtype="float64")),
-                np.squeeze(np.asarray(target_batch, dtype="float32")),
+                np.squeeze(np.asarray(target_batch, dtype="uint8")),
             )
         return (
             np.asarray(input_img_batch, dtype="float64"),
-            np.asarray(target_batch, dtype="float32"),
+            np.asarray(target_batch, dtype="uint8"),
         )
 
     def __selftest(self):
@@ -212,7 +212,7 @@ class DataSet(object):
         num_files = tf.data.experimental.cardinality(self.file_list).numpy()
         return int(np.floor(num_files / self.batch_size))
 
-    def decode_img(self, file_path: tf.Tensor):
+    def decode_img(self, file_path: tf.Tensor) -> tf.Tensor:
         """Read and decode images in path
 
         Parameters
@@ -229,7 +229,8 @@ class DataSet(object):
         img = tf.io.read_file(file_path)
         img = tf.image.decode_png(img)
         # Use `convert_image_dtype` to convert to floats in the [0,1] range.
-        return tf.convert_to_tensor(img)
+        img = tf.convert_to_tensor(img)
+        return img
 
     def process_path(self, file_path: tf.Tensor):
         """Read and decode images in path

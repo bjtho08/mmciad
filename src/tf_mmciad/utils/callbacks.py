@@ -7,8 +7,83 @@ import logging
 from time import sleep
 
 import numpy as np
-from tensorflow.keras.callbacks import Callback
+from twilio.rest import Client
+
+from tensorflow.keras.callbacks import Callback, TensorBoard
 import tensorflow.keras.backend as K
+
+
+class LossAndAccTextingCallback(Callback):
+    def __init__(self) -> None:
+        account_sid = "AC53419d4da859fe95426b41af641cda11"
+        auth_token = "7e45a775d99632d25e890afc78c6a177"
+        self.client = Client(account_sid, auth_token)
+
+    def on_epoch_end(self, epoch, logs=None):
+        message = self.client.messages.create(
+            body=f"Loss for epoch {epoch} is {logs['loss']:2.4f} and acc is {logs['acc']:1:4f}",  # Message you send
+            from_="+17034207403",  # Provided phone number
+            to="+4528129716",  # Your phone number
+        )
+        print(message.sid)
+
+
+class TensorBoardWrapper(TensorBoard):
+    '''Sets the self.validation_data property for use with TensorBoard callback.'''
+
+    def __init__(self, batch_gen, **kwargs):
+        super().__init__(**kwargs)
+        self.batch_gen = batch_gen # The generator.
+        self.nb_steps = len(self.batch_gen)   # Number of times to call next() on the generator.
+        self.batch_size = self.batch_gen.batch_size
+
+    def on_epoch_end(self, epoch, logs):
+        # Fill in the `validation_data` property. Obviously this is specific to how your generator works.
+        # Below is an example that yields images and classification tags.
+        # After it's filled in, the regular on_epoch_end method has access to the validation_data.
+        imgs, tags = None, None
+        for s in range(self.nb_steps):
+            ib, tb = self.batch_gen[s]
+            if imgs is None and tags is None:
+                imgs = np.zeros(((self.nb_steps * self.batch_size,) + ib.shape[1:]), dtype=np.float32)
+                tags = np.zeros(((self.nb_steps * self.batch_size,) + tb.shape[1:]), dtype=np.uint8)
+            imgs[s * ib.shape[0]:(s + 1) * ib.shape[0]] = ib
+            tags[s * tb.shape[0]:(s + 1) * tb.shape[0]] = tb
+        self.validation_data = [imgs, tags, np.ones(imgs.shape[0]), 0.0]
+        return super().on_epoch_end(epoch, logs)
+
+
+# ...
+
+# callbacks = [TensorBoardWrapper(gen_val, nb_steps=5, log_dir=self.cfg['cpdir'], histogram_freq=1,
+#                                batch_size=32, write_graph=False, write_grads=True)]
+# ...
+
+
+class MemoryCallback(Callback):
+    def __init__(self):
+        self.current_mem_usage = 1
+        self.prev_mem_usage = 1
+        
+    def on_epoch_end(self, epoch, log={}):
+        self.prev_mem_usage = self.current_mem_usage
+        self.current_mem_usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1000 # func returns kilobytes
+        increase = (self.current_mem_usage / self.prev_mem_usage) * 100
+        if epoch == 0:
+            print(f"Total memory usage: {self.convert_bytes(self.current_mem_usage)}")
+        else:
+            print(f"Total memory usage: {self.convert_bytes(self.current_mem_usage)} ({increase-100} % increase)")
+        
+    def convert_bytes(self, num):
+        """
+        this function will convert bytes to MB.... GB... etc
+        """
+        step_unit = 1024.0 #1024 bad the size
+
+        for x in ['bytes', 'KiB', 'MiB', 'GiB', 'TiB']:
+            if num < step_unit:
+                return "%3.1f %s" % (num, x)
+            num /= step_unit
 
 
 class ValidationHook(Callback):
@@ -152,8 +227,8 @@ class PatchedModelCheckpoint(Callback):
                                 self.previous_filepath = filepath
                             except OSError as error:
                                 print(
-                                    f"Error while trying to save the model: {error}." +
-                                    "\nTrying again..."
+                                    f"Error while trying to save the model: {error}."
+                                    + "\nTrying again..."
                                 )
                                 sleep(5)
                     else:
@@ -178,8 +253,8 @@ class PatchedModelCheckpoint(Callback):
                         self.previous_filepath = filepath
                     except OSError as error:
                         print(
-                            f"Error while trying to save the model: {error}." +
-                            "\nTrying again..."
+                            f"Error while trying to save the model: {error}."
+                            + "\nTrying again..."
                         )
                         sleep(5)
 

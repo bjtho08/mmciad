@@ -71,15 +71,17 @@ def calculate_stats(input_tiles=None, path=None, prefix="train", local=True):
 
 
 def augmentor(img, segmap):
+    """ On-line augmenting pipeline using ImgAug
+    """
     dtype = img.dtype
     segmap = [SegmentationMapsOnImage(i, shape=segmap[0].shape) for i in segmap]
     preseq = iaa.Sequential(
         [  # augmenters that will affect the input image pixel values
-            iaa.OneOf([iaa.Add((-0.07, 0.07)), iaa.Multiply((0.8, 1.2))]),
-            iaa.Dropout(p=(0.1, 0.5), per_channel=True),
+            iaa.OneOf([iaa.Add((-0.07, 0.07)), iaa.Multiply((0.9, 1.1))]),
+            iaa.Dropout(p=(0.0, 0.2), per_channel=True),
         ]
     )
-    afrot = iaa.Affine(rotate=(-90, 90), mode="reflect")
+    afrot = iaa.Affine(rotate=(0, 90), mode="reflect")
     afscale = iaa.Affine(scale=(0.8, 1.2), mode="reflect")
     eltrans = iaa.ElasticTransformation(alpha=(50, 200), sigma=(40.0), mode="reflect")
     afrot._mode_segmentation_maps = "reflect"
