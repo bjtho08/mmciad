@@ -99,6 +99,15 @@ def augmentor(img, segmap):
     return img_aug, segmap_aug
 
 def tf_augmentor(img, segmap):
+    """Augmenting the image with the given segmentation maps .
+
+    Args:
+        img ([type]): [description]
+        segmap ([type]): [description]
+
+    Returns:
+        [type]: [description]
+    """
     segmap = SegmentationMapsOnImage(segmap, shape=segmap.shape)
     preseq = iaa.Sequential(
         [  # augmenters that will affect the input image pixel values
@@ -123,6 +132,18 @@ def tf_augmentor(img, segmap):
 
 
 def calculate_class_weights(path, class_list, colordict, ignore=None, prefix="train"):
+    """Calculate the weight matrix for each class in class_list .
+
+    Args:
+        path ([type]): [description]
+        class_list ([type]): [description]
+        colordict ([type]): [description]
+        ignore ([type], optional): [description]. Defaults to None.
+        prefix (str, optional): [description]. Defaults to "train".
+
+    Returns:
+        [type]: [description]
+    """
     label_files = glob(os.path.join(path, prefix, "gt", "*.tif"))
     num_img = len(label_files)
     target_tiles = np.asarray(
@@ -151,9 +172,19 @@ def calculate_class_weights(path, class_list, colordict, ignore=None, prefix="tr
 
 
 def class_ratio(path, class_list, colordict, prefix="train"):
+    """Calculate the ratio of each class in the dataset .
+
+    Args:
+        path ([type]): [description]
+        class_list ([type]): [description]
+        colordict ([type]): [description]
+        prefix (str, optional): [description]. Defaults to "train".
+
+    Returns:
+        [type]: [description]
+    """
     label_files = glob(os.path.join(path, prefix, "gt", "*.tif"))
     num_img = len(label_files)
-    num_classes = len(class_list)
     target_tiles = np.asarray(
         [imread(label_files[i])[:, :, :3] for i in range(num_img)]
     )

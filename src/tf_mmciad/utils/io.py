@@ -13,12 +13,13 @@ from concurrent.futures import ProcessPoolExecutor
 import os
 from os import makedirs
 from os.path import isdir, join, split, splitext
-from tempfile import TemporaryFile, mkstemp
+from pathlib import Path
+import logging
+from tempfile import TemporaryFile
 from itertools import accumulate
 import numpy as np
 import cupy as cp
 import cv2 as cv
-from numpy.core.fromnumeric import size
 import yaml
 
 from PIL import Image, ImageMath
@@ -28,21 +29,34 @@ from skimage.io import imread, imsave
 from tensorflow.keras.utils import to_categorical
 from tqdm.auto import tqdm
 from numpngw import write_png
+from tf_mmciad.utils.window_ops import sliding_window as win_slider
 
+logger = logging.getLogger(__name__)
 
 # PIL.Image.DecompressionBombError: could be decompression bomb DOS attack.
+logger.info("PIL.Image.MAX_IMAGE_PIXELS = None")
 Image.MAX_IMAGE_PIXELS = None
 
 Size = namedtuple("Size", ["x", "y"])
 
 var_dict = {}
 
+
 def float_to_palette(image: Image) -> Image:
     """Convert float input to 8-bit
     """
     return ImageMath.eval("convert(int(a * 255), 'P')", a=image)
 
+
 def init_worker(arrs, arr_shapes, stats, lock):
+    """Initialize the worker .
+
+    Args:
+        arrs ([type]): [description]
+        arr_shapes ([type]): [description]
+        stats ([type]): [description]
+        lock ([type]): [description]
+    """
     var_dict["arrs"] = arrs
     var_dict["shape"] = arr_shapes
     var_dict["stats"] = stats
@@ -229,9 +243,13 @@ class ImageFetcher:
         slide_files = sorted(glob(join(path, "".join(search_string))), key=str.lower)
         file_dict = OrderedDict()
         for file in slide_files:
-            file_id = "-".join(splitext(split(file)[1])[0].split("-")[1:]).replace(
-                "-corrected", ""
-            ) if prefix else splitext(split(file)[1])[0]
+            file_id = (
+                "-".join(splitext(split(file)[1])[0].split("-")[1:]).replace(
+                    "-corrected", ""
+                )
+                if prefix
+                else splitext(split(file)[1])[0]
+            )
             file_dict[file_id] = file
         return file_dict
 
@@ -259,6 +277,15 @@ class ImageFetcher:
 
 
 def duplicate_tile(tile, label_color):
+    """Check if tile should be duplicated.
+
+    Args:
+        tile ([type]): [description]
+        label_color ([type]): [description]
+
+    Returns:
+        [type]: [description]
+    """
     detection_threshold = 0.05
     segmap = np.logical_and.reduce(tile == label_color, axis=-1)
     if segmap.sum() >= segmap.size * detection_threshold:
@@ -316,6 +343,30 @@ def load_slides_as_dict(
     colors=None,
     cuda=False,
 ):
+    """Loads a dictionary of slides from a file .
+
+    Args:
+        path ([type]): [description]
+        prefix (str, optional): [description]. Defaults to "N8b".
+        mean_arr ([type], optional): [description]. Defaults to None.
+        std_arr ([type], optional): [description]. Defaults to None.
+        input_max (int, optional): [description]. Defaults to 255.
+        gt_path ([type], optional): [description]. Defaults to None.
+        num_cls ([type], optional): [description]. Defaults to None.
+        colors ([type], optional): [description]. Defaults to None.
+        cuda (bool, optional): [description]. Defaults to False.
+
+    Raises:
+        ValueError: [description]
+        ValueError: [description]
+        ValueError: [description]
+
+    Returns:
+        [type]: [description]
+
+    Yields:
+        [type]: [description]
+    """
     if gt_path and num_cls is None:
         raise ValueError("Required input missing: num_cls")
     if gt_path and colors is None:
@@ -388,34 +439,17 @@ def load_slides_as_dict(
             #    os.unlink(i.filename)
             del memmap_input_slides
         elif memmap and cuda:
-
-            def sliding_window(image, step_size, window_size):
-                """ slide a window across the image
-                """
-                width, height = image.shape[:2]
-                window_x, window_y = window_size
-                for y in range(0, height - window_y + step_size, step_size):
-                    for x in range(0, width - window_x + step_size, step_size):
-                        # yield the current window
-                        res_img = image[x : x + window_x, y : y + window_y]
-                        change = False
-                        if res_img.shape[1] != window_y:
-                            y = height - window_y
-                            change = True
-                        if res_img.shape[0] != window_x:
-                            x = width - window_x
-                            change = True
-                        if change:
-                            res_img = image[x : x + window_x, y : y + window_y]
-                        yield (x, y, x + window_x, y + window_y, res_img)
-
             for name, img in tqdm(input_slides.items(), desc="Processing input images"):
-                with TemporaryFile(prefix="raw_", dir=path + "../tmp") as rf:
-                    tmp = np.memmap(rf, dtype=np.floating, mode="w+", shape=img.shape,)
-                    for (x, y, dx, dy, I) in sliding_window(img, 3072, (3072, 3072)):
-                        img = cp.array(I)
+                with TemporaryFile(prefix="raw_", dir=path + "../tmp") as raw_fp:
+                    tmp = np.memmap(
+                        raw_fp, dtype=np.floating, mode="w+", shape=img.shape,
+                    )
+                    for (x, y, dx, dy, window) in win_slider(
+                        img, 3072, (3072, 3072)
+                    ):
+                        img = cp.array(window)
                         cp.cuda.Stream.null.synchronize()
-                        img[x:dx, y:dy] = (I - mean_arr) / std_arr
+                        img[x:dx, y:dy] = (window - mean_arr) / std_arr
                         cp.cuda.Stream.null.synchronize()
         else:
             for i in input_slides.keys():
@@ -523,8 +557,13 @@ def load_slides_as_dict(
 
 
 def parallel_categorical(chunk):
-    C, offset = chunk
-    it = np.nditer(C, flags=["multi_index", "zerosize_ok"])
+    """Convert a chunk of one-hot encoded array to a categorical array .
+
+    Args:
+        chunk ([type]): [description]
+    """
+    arr_chunk, offset = chunk
+    it = np.nditer(arr_chunk, flags=["multi_index", "zerosize_ok"])
     tmp = np.frombuffer(var_dict["arrs"][0]).reshape(var_dict["shape"][0])
     img = np.frombuffer(var_dict["arrs"][1], dtype=np.uint8).reshape(
         var_dict["shape"][1]
@@ -547,8 +586,13 @@ def parallel_categorical(chunk):
 
 
 def parallel_norm(chunk):
-    C, offset = chunk
-    it = np.nditer(C, flags=["multi_index", "zerosize_ok"])
+    """Perform normalization of a chunk of an array.
+
+    Args:
+        chunk ([type]): [description]
+    """
+    arr_chunk, offset = chunk
+    it = np.nditer(arr_chunk, flags=["multi_index", "zerosize_ok"])
     tmp = np.frombuffer(var_dict["arrs"][0]).reshape(var_dict["shape"])
     img = np.frombuffer(var_dict["arrs"][1]).reshape(var_dict["shape"])
     mean_arr = var_dict["stats"][0]
@@ -562,6 +606,13 @@ def parallel_norm(chunk):
 
 
 def move_files_in_dir(src_dir: str, dst_dir: str, pattern=None) -> None:
+    """Move files in src_dir to dst_dir .
+
+    Args:
+        src_dir (str): [description]
+        dst_dir (str): [description]
+        pattern ([type], optional): [description]. Defaults to None.
+    """
     # Check if both the are directories
     if isdir(src_dir) and isdir(dst_dir):
         # Iterate over all the files in source directory
@@ -593,9 +644,6 @@ def move_files_in_dir(src_dir: str, dst_dir: str, pattern=None) -> None:
         print("src_dir & dst_dir should be directories")
 
 
-import sys
-
-
 class ImageTiler:
     """Create tiles from a TIFF image file and store them as a
     collection of TIFF files.
@@ -607,17 +655,17 @@ class ImageTiler:
 
     def __init__(
         self,
-        image_path,
+        image_path: Path,
         tile_dimensions: Iterable[int],
-        tile_path,
+        tile_path: Path,
         tile_overlap: int = 128,
         force_extension: Optional[str] = None,
     ):
-        self.basename, self.extension = os.path.splitext(os.path.basename(image_path))
+        self.basename, self.extension = image_path.stem, image_path.suffix
         self.width, self.height = tile_dimensions
         self.overlap = tile_overlap
         self.tile_path = tile_path
-        self._tile_list: List[str] = list()
+        self._tile_list: List[Path] = list()
         self.tile_coords: Dict[str, Tuple[int, int, int, int]] = dict()
         self.img = Image.open(image_path)
         self.img_width, self.img_height = self.img.size
@@ -649,17 +697,16 @@ class ImageTiler:
         NotADirectoryError
             Raised if tile_path points to a file
         """
-        if os.path.exists(self.tile_path) and os.path.isdir(self.tile_path):
+        if self.tile_path.is_dir():
             self._tile_list = sorted(
-                glob(os.path.join(self.tile_path, f"{self.basename}_*{self.extension}"))
+                self.tile_path.glob(f"{self.basename}_*{self.extension}")
             )
             if self._tile_list:
                 self._mimick_tile_generation()
-        elif os.path.exists(self.tile_path):
+        elif self.tile_path.is_file():
             raise NotADirectoryError(f"The directory name is invalid: {self.tile_path}")
         else:
-            makedirs(self.tile_path, exist_ok=True)
-            self._tile_list = []
+            self.tile_path.mkdir(exist_ok=True)
 
     def _mimick_tile_generation(self):
         for k, (_, bbox) in enumerate(self._crop()):
@@ -729,8 +776,8 @@ class ImageTiler:
         """Remove all tiles
         """
         for file in self._tile_list:
-            os.unlink(file)
-        os.rmdir(self.tile_path)
+            file.unlink()
+        self.tile_path.rmdir()
 
     def __getitem__(self, index):
         """x.__getitem__(y) <==> x[y]
@@ -760,16 +807,29 @@ class ImageAssembler:
     """
 
     def __init__(
-        self, image_path: str, tile_info: Union[str, ImageTiler], ext: str = None
+        self,
+        output_path: Union[str, Path],
+        tile_info: Union[str, Path, ImageTiler],
+        ext: str = None,
     ):
-        self.img_path = image_path
+        """Initialize the instance of this TileTiler .
+
+        Args:
+            output_path (str, Path): path to recombined output image
+            tile_info (str, Path, ImageTiler): ImageTiler object or path to a
+                YAML dump of an ImageTiler object
+            ext (str, optional): file extension for output image. If omitted, the
+                extension is inferred from the extension of the tiles.
+                Defaults to None.
+        """
+        self.img_path = Path(output_path)
         self.tile_coords = None
         self.width, self.height = 0, 0
         self.overlap = 0
         self.img_width, self.img_height = 0, 0
         self._tile_list = None
         self.ext = ""
-        if not isinstance(tile_info, str):
+        if not isinstance(tile_info, (str, Path)):
             self.img_tiler: ImageTiler = tile_info
             self._tile_list = self.img_tiler._tile_list
             self.tile_coords = self.img_tiler.tile_coords
@@ -785,7 +845,7 @@ class ImageAssembler:
         if ext:
             self.ext = ext
 
-    def load(self, file_path):
+    def load(self, file_path: Union[str, Path]):
         """Load tile information from file
         """
         with open(file_path, mode="r") as file:
@@ -800,7 +860,7 @@ class ImageAssembler:
     def _get_extension(self, tile_path):
         return os.path.splitext(tile_path)[-1]
 
-    def read_tiff(self, path: str) -> np.ndarray:
+    def read_tiff(self, path: Union[str, Path]) -> np.ndarray:
         """
         path - Path to the multipage-tiff file
 
@@ -833,25 +893,27 @@ class ImageAssembler:
         else:
             palette = None
 
-        def to_palette(image):
-            image = image.dot(np.array([65536, 256, 1], dtype="int32"))
-            return color_map[image].astype("uint8")
+        # def to_palette(image):
+        #     image = image.dot(np.array([65536, 256, 1], dtype="int32"))
+        #     return color_map[image].astype("uint8")
 
         for _, (fp, (x, y, _, _)) in enumerate(sorted(self.tile_coords.items())):
             fp = f"{os.path.splitext(fp)[0]}{self.ext}"
             if not multi_frame:
-                tile = Image.open(fp)
-                if tile.n_frames > 1:
-                    tile.close()
-                    multi_frame = True
+                with Image.open(fp) as tile:
+                    if tile.n_frames > 1:
+                        multi_frame = True
+                    else:
+                        tile = Image.fromarray(tile)
+
             if multi_frame:
                 tile = self.read_tiff(fp)
                 if colors is not None:
                     if img.mode == "RGB":
                         img = img.convert(mode="P")
-                    if tile.shape[:-1] == (self.width, self.height): # channels last
+                    if tile.shape[:-1] == (self.width, self.height):  # channels last
                         sparse_tile = cp.argmax(tile, axis=-1)
-                    else: # channels first
+                    else:  # channels first
                         sparse_tile = cp.argmax(tile, axis=0)
                     pil_kwargs["format"] = "PNG"
                     pil_kwargs["mode"] = "P"
@@ -859,8 +921,6 @@ class ImageAssembler:
                     uint_tile = sparse_tile.get()
                     uint_tile = uint_tile.astype(np.uint8)
                     tile = Image.fromarray(uint_tile, mode="P")
-                else:
-                    tile = Image.fromarray(tile)
 
             mask = np.full((self.width, self.height), 255, dtype="uint8")
             if y > 0:
@@ -874,16 +934,24 @@ class ImageAssembler:
         if colors is not None:
             img = img.convert(mode="P")
             img.putpalette(palette)
+        self.img_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Writing to {self.img_path} ...")
         img.save(self.img_path, **pil_kwargs)
-
+        logger.info(f"Finished writing to {self.img_path}")
 
     def merge_multichannel(self):
+        """Merge the image tiles and save each channelas a separate image.
+
+        Returns:
+            [type]: [description]
+        """
         meta_name, _ = os.path.splitext(self._tile_list[0])
         meta_path = meta_name + self.ext
         meta_img = Image.open(meta_path)
         n_frames = meta_img.n_frames
         meta_img.close()
         path_list = []
+        logger.info("Writing to disk ...")
         for frame in range(n_frames):
             img = Image.new("F", (self.img_width, self.img_height), 0.0)
             for _, (fp, (x, y, _, _)) in enumerate(sorted(self.tile_coords.items())):
@@ -911,4 +979,5 @@ class ImageAssembler:
             tifsave(channel_path, arr, bigtiff=True)
             # img.save(channel_path, bigtiff=True)
             path_list.append(channel_path)
+        logger.info("Finished writing to disk")
         return path_list
