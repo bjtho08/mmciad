@@ -6,69 +6,32 @@ import os
 import os.path as osp
 from collections import OrderedDict
 from glob import glob
-from typing import Union, Dict, Any
-import numpy as np
-from numpy.lib.function_base import average
+from typing import Any, Dict, Union
 
+import numpy as np
 import tensorflow as tf
-from tensorflow.python import keras
-from tensorflow.python.keras.backend import dtype
 import tensorflow_addons as tfa
 # from keras_radam import RAdam
 from tensorflow.keras.activations import selu, sigmoid, tanh
-from tensorflow.keras.callbacks import (
-    Callback,
-    CSVLogger,
-    EarlyStopping,
-    ReduceLROnPlateau,
-    TensorBoard,
-    LambdaCallback,
-)
-from tensorflow.keras.layers import (
-    ELU,
-    LeakyReLU,
-    PReLU,
-    ReLU,
-    Softmax,
-    ThresholdedReLU,
-)
-from tensorflow.keras.losses import (
-    binary_crossentropy,
-    categorical_crossentropy,
-    mae,
-    mse,
-)
-
+from tensorflow.keras.callbacks import (Callback, CSVLogger, EarlyStopping,
+                                        LambdaCallback, ReduceLROnPlateau)
+from tensorflow.keras.layers import (ELU, LeakyReLU, PReLU, ReLU, Softmax,
+                                     ThresholdedReLU)
+from tensorflow.keras.losses import (binary_crossentropy,
+                                     categorical_crossentropy, mae, mse)
 # from keras_contrib.callbacks import DeadReluDetector
-from tensorflow.keras.optimizers import (
-    SGD,
-    Adadelta,
-    Adagrad,
-    Adam,
-    Adamax,
-    Nadam,
-    RMSprop,
-)
-
-
-from tf_mmciad.utils.callbacks import (
-    PatchedModelCheckpoint,
-    LossAndAccTextingCallback,
-    TensorBoardWrapper,
-    # DeadReluDetector
-)
-from tf_mmciad.utils.custom_loss import (
-    categorical_focal_loss,
-    jaccard1_coef,
-    jaccard1_loss,
-    jaccard2_loss,
-    tversky_loss,
-    weighted_loss,
-)
-from tf_mmciad.utils.generator import DataGenerator
-from tf_mmciad.utils.u_net import u_net
-from tf_mmciad.utils.swish import Swish
+from tensorflow.keras.optimizers import (SGD, Adadelta, Adagrad, Adam, Adamax,
+                                         Nadam, RMSprop)
+from tensorflow.python import keras
+from tf_mmciad.utils.callbacks import (  # DeadReluDetector
+    LossAndAccTextingCallback, PatchedModelCheckpoint, TensorBoardWrapper)
+from tf_mmciad.utils.custom_loss import (categorical_focal_loss, jaccard1_coef,
+                                         jaccard1_loss, jaccard2_loss,
+                                         tversky_loss, weighted_loss)
 from tf_mmciad.utils.f_scores import F1Score
+from tf_mmciad.utils.generator import DataGenerator
+from tf_mmciad.utils.swish import Swish
+from tf_mmciad.utils.u_net import u_net
 
 # from keras_tqdm import TQDMNotebookCallback
 # import talos
@@ -181,7 +144,7 @@ def get_opt_function(name: str):
     """
     func_dict = {
         "adam": Adam,
-        #"radam": RAdam,
+        # "radam": RAdam,
         "nadam": Nadam,
         "sgd": SGD,
         "rmsprop": RMSprop,
@@ -194,6 +157,7 @@ def get_opt_function(name: str):
         opt_func = Adam
         raise Warning("Uknown optimizer, falling back to Adam")
     return opt_func
+
 
 class LogSegmentationProgress(Callback):
     """Simple image writer class"""
@@ -209,17 +173,19 @@ class LogSegmentationProgress(Callback):
         self.x_min = self.tb_params.pop("x_min")
         self.x_max = self.tb_params.pop("x_max")
         self.tb_args = [
-            self.path, self.color_dict, self.means, self.stds, self.x_min, self.x_max
+            self.path,
+            self.color_dict,
+            self.means,
+            self.stds,
+            self.x_min,
+            self.x_max,
         ]
 
     def on_epoch_end(self, epoch, logs=None):
         _ = logs
-        
+
         test_generator = DataGenerator(
-            *self.tb_args,
-            **self.tb_params,
-            shuffle=False,
-            augment=False,
+            *self.tb_args, **self.tb_params, shuffle=False, augment=False,
         )
         # Use the model to predict the values from the validation dataset.
         test_pred_raw = self.model.predict(test_generator)
@@ -230,10 +196,7 @@ class LogSegmentationProgress(Callback):
         raw_input = (norm_input * self.stds) + self.means
         raw_input = np.round(raw_input).astype(np.uint8)
         # recreate color matrix
-        palette = np.array(
-            list(self.color_dict.values()),
-            dtype="uint8",
-        )
+        palette = np.array(list(self.color_dict.values()), dtype="uint8",)
         # convert one-hot encoded matrices to RBG
         cat_pred = palette[test_pred]
         cat_targets = palette[np.argmax(targets, axis=-1)]
@@ -425,9 +388,10 @@ def single_run(
             for n in bn_layers:
                 model.get_layer(name=n).trainable = False
 
-
         model.compile(
-            loss=loss_func, optimizer=opt_func(p["lr"]), metrics=["acc", f1_average, *f1_per_class, jaccard1_coef],
+            loss=loss_func,
+            optimizer=opt_func(p["lr"]),
+            metrics=["acc", f1_average, *f1_per_class, jaccard1_coef],
         )
 
     file_writer_seg = tf.summary.create_file_writer(tb_path + "/images")
@@ -436,9 +400,13 @@ def single_run(
         file_writer_seg, tensorboard_params
     )
 
-    #tb_image_cb = LambdaCallback(on_epoch_end=log_image_segmentation)
+    # tb_image_cb = LambdaCallback(on_epoch_end=log_image_segmentation)
 
-    model_callbacks = [csv_logger, tb_callback, log_image_segmentation]  # , gamify_callback]
+    model_callbacks = [
+        csv_logger,
+        tb_callback,
+        log_image_segmentation,
+    ]  # , gamify_callback]
     if notebook:
         tqdm_progress = tfa.callbacks.TQDMProgressBar()
         model_callbacks.append(tqdm_progress)
@@ -465,7 +433,7 @@ def single_run(
     return model, history
 
 
-class TalosModel():
+class TalosModel:
     """Initialize a talos model object for hyper-parameter search
 
     :param weight_path: Path to the base weight folder
@@ -529,10 +497,13 @@ class TalosModel():
         """ Update the model number for file naming purposes
         """
         cfg_count = len(
-                [file for file in os.listdir(self.model_base_path) if str(file).endswith(".cfg")]
-            )
+            [
+                file
+                for file in os.listdir(self.model_base_path)
+                if str(file).endswith(".cfg")
+            ]
+        )
         self.model_count = max(cfg_count - 1, 0)
-
 
     def __call__(self, *args):
         """Talos model setup
@@ -558,9 +529,9 @@ class TalosModel():
             p.update(talos_params)
         elif isinstance(last, int):
             self.write_config()
-            model_exp_name = last
+            model_exp_name = last # What was I thinking?
         if not isinstance(last, dict) and self.grid_run:
-            raise TypeError(f'Expected a dict of parameters, got {type(last)}')
+            raise TypeError(f"Expected a dict of parameters, got {type(last)}")
         loss_func = get_loss_function(p["loss_func"])
         act_func = get_act_function(p["act"])
         opt_func = get_opt_function(p["opt"])
@@ -592,7 +563,6 @@ class TalosModel():
         self.modelpath = osp.join(self.model_base_path, self.model_handle)
         tb_path = osp.join(self.tensorboard_base_path, self.model_handle)
 
-
         model_kwargs = {
             "shape": p["shape"],
             "nb_filters": int(p["nb_filters_0"]),
@@ -608,7 +578,7 @@ class TalosModel():
             "arch": p["arch"],
         }
 
-        f1_per_class = tfa.metrics.F1Score(num_classes=p["num_cls"], average='report')
+        f1_per_class = tfa.metrics.F1Score(num_classes=p["num_cls"], average="report")
         csv_logger = CSVLogger(self.modelpath + ".fit.csv", append=True)
         if self.notebook:
             tqdm_progress = tfa.callbacks.TQDMProgressBar()
@@ -644,13 +614,17 @@ class TalosModel():
             verbose=0,
             monitor="acc",
             save_best_only=True,
-    )
+        )
 
         # talos_path = osp.join("talos", p["date"])
         # gamify_callback = talos.utils.ExperimentLogCallback(talos_path, talos_params)
         # dead_relus = DeadReluDetector(x_train=train_generator)
 
-        model_callbacks = [csv_logger, tb_callback, LossAndAccTextingCallback()]  # , gamify_callback]
+        model_callbacks = [
+            csv_logger,
+            tb_callback,
+            LossAndAccTextingCallback(),
+        ]  # , gamify_callback]
         if self.notebook:
             model_callbacks.append(tqdm_progress)
         opti_callbacks = [
@@ -675,22 +649,27 @@ class TalosModel():
 
             tb_image_cb = LambdaCallback(on_epoch_end=log_image_segmentation)
 
-            model_callbacks = [csv_logger, tb_callback, file_writer_seg, tb_image_cb]  # , gamify_callback]
+            model_callbacks = [
+                csv_logger,
+                tb_callback,
+                file_writer_seg,
+                tb_image_cb,
+            ]  # , gamify_callback]
             compile_kwargs = {
-                'loss': loss_func,
-                'optimizer': opt_func(p["lr"]),
-                'metrics': ['acc', f1_per_class, jaccard1_coef]
+                "loss": loss_func,
+                "optimizer": opt_func(p["lr"]),
+                "metrics": ["acc", f1_per_class, jaccard1_coef],
             }
 
             fit_kwargs = {
-                'x': self.train_generator,
-                'epochs': p["nb_frozen"],
-                'validation_data': self.val_generator,
-                'use_multiprocessing': True,
-                'workers': 30,
-                'class_weight': class_weights,
-                'verbose': p["verbose"],
-                'callbacks': model_callbacks,
+                "x": self.train_generator,
+                "epochs": p["nb_frozen"],
+                "validation_data": self.val_generator,
+                "use_multiprocessing": True,
+                "workers": 30,
+                "class_weight": class_weights,
+                "verbose": p["verbose"],
+                "callbacks": model_callbacks,
             }
 
             model, history = self.fit(model, compile_kwargs, fit_kwargs)
@@ -706,9 +685,9 @@ class TalosModel():
 
             fit_kwargs.update(
                 {
-                    'epochs': p["nb_epoch"],
-                    'initial_epoch': p["nb_frozen"],
-                    'callbacks': model_callbacks + opti_callbacks,
+                    "epochs": p["nb_epoch"],
+                    "initial_epoch": p["nb_frozen"],
+                    "callbacks": model_callbacks + opti_callbacks,
                 }
             )
 
@@ -718,21 +697,21 @@ class TalosModel():
             #   "No layers frozen at start\nclass weights: {}".format(class_weights)
             # )
             compile_kwargs = {
-                'loss': loss_func,
-                'optimizer': opt_func(p["lr"]),
-                'metrics': ['acc', jaccard1_coef]
+                "loss": loss_func,
+                "optimizer": opt_func(p["lr"]),
+                "metrics": ["acc", jaccard1_coef],
             }
 
             fit_kwargs = {
-                'x': self.train_generator,
-                'epochs': p["nb_epoch"],
-                'validation_data': self.val_generator,
-                'workers': 30,
-                'steps_per_epoch': p.get("steps_per_epoch", None),
-                'validation_steps': p.get("steps_per_epoch", None),
-                'class_weight': class_weights,
-                'verbose': p["verbose"],
-                'callbacks': model_callbacks + opti_callbacks,
+                "x": self.train_generator,
+                "epochs": p["nb_epoch"],
+                "validation_data": self.val_generator,
+                "workers": 30,
+                "steps_per_epoch": p.get("steps_per_epoch", None),
+                "validation_steps": p.get("steps_per_epoch", None),
+                "class_weight": class_weights,
+                "verbose": p["verbose"],
+                "callbacks": model_callbacks + opti_callbacks,
             }
             model = u_net(**model_kwargs)
 
@@ -744,7 +723,12 @@ class TalosModel():
 
             tb_image_cb = LambdaCallback(on_epoch_end=log_image_segmentation)
 
-            model_callbacks = [csv_logger, tb_callback, file_writer_seg, tb_image_cb]  # , gamify_callback]
+            model_callbacks = [
+                csv_logger,
+                tb_callback,
+                file_writer_seg,
+                tb_image_cb,
+            ]  # , gamify_callback]
             model, history = self.fit(model, compile_kwargs, fit_kwargs)
             self.model_count += 1
         return history, model
@@ -752,12 +736,12 @@ class TalosModel():
     def write_config(self, talos_params=None):
         """ Write a short file detailing the applied parameters
         """
-        with open(file=self.modelpath + ".cfg", mode="w") as f:  # pylint: disable=invalid-name
+        with open(
+            file=self.modelpath + ".cfg", mode="w"
+        ) as f:  # pylint: disable=invalid-name
             f.write("#" * 62 + "\n#" + " " * 60 + "#\n")
             f.write(
-                "#"
-                + f"Model Paramters for {self.model_handle}_*.h5".center(60)
-                + "#\n"
+                "#" + f"Model Paramters for {self.model_handle}_*.h5".center(60) + "#\n"
             )
             f.write("#" + " " * 60 + "#\n" + "#" * 62 + "\n\n")
             if talos_params:
