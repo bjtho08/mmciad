@@ -57,17 +57,43 @@ def _shortcut(input_: Layer, residual: Layer):
 
 
 def batchnorm_activate(m, bn, level, acti, iter_):
+    """Apply batch normalization followed by an activation Function
+
+    Args:
+        m ([type]): [description]
+        bn ([type]): [description]
+        level ([type]): [description]
+        acti ([type]): [description]
+        iter_ ([type]): [description]
+
+    Returns:
+        [type]: [description]
+    """
     n = BatchNormalization(name=f"block{level}_bn{iter_}")(m) if bn else m
     try:
-        n = acti(
-            name=f"block{level}_{acti.__name__}{iter_}", trainable=True
-        )(n)
+        n = acti(name=f"block{level}_{acti.__name__}{iter_}", trainable=True)(n)
     except TypeError:
         n = acti(name=f"block{level}_{acti.__name__}{iter_}")(n)
     return n
 
 
 def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, strides=1, do=0):
+    """A bottleneck function that takes a convolution layer and a block of convolutions.
+
+    Args:
+        m ([type]): [description]
+        nb_filters ([type]): [description]
+        conv_size ([type]): [description]
+        init ([type]): [description]
+        acti ([type]): [description]
+        bn ([type]): [description]
+        level ([type]): [description]
+        strides (int, optional): [description]. Defaults to 1.
+        do (int, optional): [description]. Defaults to 0.
+
+    Returns:
+        [type]: [description]
+    """
     n = batchnorm_activate(m, bn, level, acti, 1)
     n = Conv2D(
         filters=nb_filters,
@@ -98,6 +124,22 @@ def bottleneck(m, nb_filters, conv_size, init, acti, bn, level, strides=1, do=0)
 
 
 def conv_block(m, nb_filters, conv_size, init, acti, bn, level, strides=None, do=0):
+    """A block of convolutional layer.
+
+    Args:
+        m ([type]): [description]
+        nb_filters ([type]): [description]
+        conv_size ([type]): [description]
+        init ([type]): [description]
+        acti ([type]): [description]
+        bn ([type]): [description]
+        level ([type]): [description]
+        strides ([type], optional): [description]. Defaults to None.
+        do (int, optional): [description]. Defaults to 0.
+
+    Returns:
+        [type]: [description]
+    """
     _ = strides
     n = MyConv2D(
         nb_filters,
@@ -120,8 +162,42 @@ def conv_block(m, nb_filters, conv_size, init, acti, bn, level, strides=None, do
 
 
 def level_block(
-    m, nb_filters, conv_size, init, depth, inc, acti, do, bn, mp, up, level=1, res=False, enc_only=False,
+    m,
+    nb_filters,
+    conv_size,
+    init,
+    depth,
+    inc,
+    acti,
+    do,
+    bn,
+    mp,
+    up,
+    level=1,
+    res=False,
+    enc_only=False,
 ):
+    """Create a block level layer with
+
+    Args:
+        m ([type]): [description]
+        nb_filters ([type]): [description]
+        conv_size ([type]): [description]
+        init ([type]): [description]
+        depth ([type]): [description]
+        inc ([type]): [description]
+        acti ([type]): [description]
+        do ([type]): [description]
+        bn ([type]): [description]
+        mp ([type]): [description]
+        up ([type]): [description]
+        level (int, optional): [description]. Defaults to 1.
+        res (bool, optional): [description]. Defaults to False.
+        enc_only (bool, optional): [description]. Defaults to False.
+
+    Returns:
+        [type]: [description]
+    """
     if res:
         block = bottleneck
     else:

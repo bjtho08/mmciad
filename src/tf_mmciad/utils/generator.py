@@ -1,12 +1,12 @@
 """Create generators for supplying keras models with data
 """
-import os.path as osp
-from glob import glob
+from pathlib import Path
 import numpy as np
 from skimage.io import imread
+from PIL import Image
 import tensorflow as tf
 from tensorflow.keras.utils import to_categorical
-from .preprocessing import augmentor, tf_augmentor, merge_labels
+from tf_mmciad.utils.preprocessing import augmentor, tf_augmentor, merge_labels
 
 RGB = 3
 INDEXED = 1
@@ -15,7 +15,6 @@ AUTOTUNE = tf.data.experimental.AUTOTUNE
 
 class DataGenerator(tf.keras.utils.Sequence):
     "Generates data for Keras"
-
 
     def __init__(
         self,
@@ -36,7 +35,7 @@ class DataGenerator(tf.keras.utils.Sequence):
     ):
         "Initialization"
         self.dim = dim
-        self.path = path
+        self.path = Path(path)
         self.color_dict = color_dict
         self.means = means
         self.stds = stds
@@ -49,12 +48,8 @@ class DataGenerator(tf.keras.utils.Sequence):
         self.shuffle = shuffle
         self.augment = augment
         self.remap_labels = remap_labels
-
         if self.id_list is None:
-            self.id_list = [
-                osp.splitext(osp.basename(i))[0]
-                for i in glob(osp.join(self.path, "*.png"))
-            ]
+            self.id_list = [i.stem for i in sorted(self.path.glob("*.png"))]
 
         self.__selftest()
         self.on_epoch_end()
@@ -100,29 +95,25 @@ class DataGenerator(tf.keras.utils.Sequence):
         input_img_batch = np.empty(
             (self.batch_size, *self.dim, self.n_channels), dtype=np.float32
         )
-        target_batch = np.empty((self.batch_size, *self.dim, RGB), dtype=np.uint8)
         target_batch_class = [
-            np.zeros((*self.dim, 1), dtype=np.uint8) for _ in range(self.batch_size)
+            np.empty((*self.dim,), dtype=np.uint8) for _ in range(self.batch_size)
         ]
 
         # Generate data
         for i, sample_id in enumerate(id_list_temp):
             # Store sample
-            input_img_batch[i] = imread(self.path + sample_id + ".png")
+            input_img_batch[i] = imread(self.path / f"{sample_id}.png")
             input_img_batch = input_img_batch.astype(np.float32, copy=False)
             input_img_batch[i] = (input_img_batch[i] - self.means) / self.stds
             # input_img_batch[i] = (input_img_batch[i] - self.x_min) / (
             #    self.x_max - self.x_min
             # )
             # Store class
-            target_batch[i,] = imread(self.path + "gt/" + sample_id + ".png").astype(
-                "uint8"
-            )[..., :3]
-            for cls_, color in enumerate(self.color_dict.values()):
-                target_batch_class[i] += np.expand_dims(
-                    np.logical_and.reduce(target_batch[i,] == color, axis=-1) * cls_,
-                    axis=-1,
-                ).astype("uint8")
+            unproc_img = np.array(
+                Image.open(self.path / "gt" / f"{sample_id}.png")
+            )
+            proc_img = np.putmask(unproc_img, unproc_img == 0, 1)
+            target_batch_class[i] = proc_img
             if isinstance(self.remap_labels, dict):
                 self.n_classes = len(self.remap_labels)
                 target_batch_class[i] = merge_labels(
@@ -157,7 +148,6 @@ class DataGenerator(tf.keras.utils.Sequence):
             ValueError: Invalid value for batch_size
             FileNotFoundError: No matching files found in specified path
         """
-
         if not isinstance(self.batch_size, int):
             raise TypeError(
                 f"Batch size: {type(self.batch_size)} is not an instance of int()"
@@ -166,7 +156,7 @@ class DataGenerator(tf.keras.utils.Sequence):
             raise ValueError(f"Batch size: {self.batch_size} cannot be less than 1")
         if len(self.id_list) < 1:
             raise FileNotFoundError(
-                f"Empty dataset ({len(self.id_list)}). Verify path ({self.path})"
+                f"Empty dataset ({len(self.id_list)}). Verify path ({self.path.resolve()})"
             )
 
 
@@ -178,6 +168,7 @@ class DataSet(object):
     object : [type]
         [description]
     """
+
     def __init__(
         self,
         path,
@@ -262,6 +253,7 @@ class DataSet(object):
     def augment_fn(self):
         """Augment data in dataset
         """
+
         def augment(examples, targets):
             ex_shape = examples.shape
             ta_shape = targets.shape

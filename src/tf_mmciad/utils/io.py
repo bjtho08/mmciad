@@ -2,37 +2,53 @@
 Input-Output module. Helps read and write data between persistent
 and volatile memory
 """
-import shutil
-from typing import Dict, Iterable, List, Optional, Tuple, Union
-from collections import OrderedDict, namedtuple
 import gc
+import logging
+import logging.handlers
+import os
+import shutil
+import sys
+from collections import OrderedDict, namedtuple
+from concurrent.futures import ProcessPoolExecutor
 from glob import glob
+from itertools import accumulate
 from multiprocessing import cpu_count
 from multiprocessing.sharedctypes import RawArray
-from concurrent.futures import ProcessPoolExecutor
-import os
-from os import makedirs
 from os.path import isdir, join, split, splitext
 from pathlib import Path
-import logging
 from tempfile import TemporaryFile
-from itertools import accumulate
-import numpy as np
+from typing import Dict, Iterable, Iterator, List, Optional, Tuple, Union
+
 import cupy as cp
-import cv2 as cv
+#import cv2 as cv
+import numpy as np
 import yaml
-
-from PIL import Image, ImageMath
-from tifffile import imsave as tifsave
-
+from PIL import Image, ImageMath, UnidentifiedImageError
 from skimage.io import imread, imsave
 from tensorflow.keras.utils import to_categorical
+from tifffile import imsave as tifsave
+from tifffile import imread as tifread
 from tqdm.auto import tqdm
-from numpngw import write_png
 from tf_mmciad.utils.window_ops import sliding_window as win_slider
 
 logger = logging.getLogger(__name__)
-
+c_handler = logging.StreamHandler(sys.stderr)
+f_path = Path("/nb_projects/logfiles/io.log")
+f_path.mkdir(parents=True, exist_ok=True)
+logger.setLevel(logging.DEBUG)
+f_handler = logging.handlers.RotatingFileHandler(
+    f_path / "debug.log", maxBytes=2*1024**2, backupCount=5
+)
+f_handler.setLevel(logging.DEBUG)
+c_handler.setLevel(logging.DEBUG)
+log_format = logging.Formatter(
+    "%(asctime)s - %(name)s - %(levelname)s: %(message)s",
+    datefmt="%d/%m/%Y %H:%M:%S",
+)
+f_handler.setFormatter(log_format)
+c_handler.setFormatter(log_format)
+logger.addHandler(f_handler)
+logger.addHandler(c_handler)
 # PIL.Image.DecompressionBombError: could be decompression bomb DOS attack.
 logger.info("PIL.Image.MAX_IMAGE_PIXELS = None")
 Image.MAX_IMAGE_PIXELS = None
@@ -64,7 +80,7 @@ def init_worker(arrs, arr_shapes, stats, lock):
 
 
 def create_samples(
-    path: str,
+    path: Union[Path, str],
     filter_dict: dict = None,
     prefix="train",
     output_dir=None,
@@ -108,30 +124,29 @@ def create_samples(
         x=size.x // (100 // (100 - overlap)), y=size.y // (100 // (100 - overlap))
     )
     output_dir = prefix if output_dir is None else output_dir
-    makedirs(join(path, output_dir, "gt", ""), exist_ok=True)
-    image_fetcher = ImageFetcher(path, join(path, "gt"), prefix, "tif", "png")
-    with tqdm(total=len(image_fetcher)) as pbar:
-        for name, input_slide, target_slide in image_fetcher.yield_pair():
-            dim_x, dim_y = target_slide.shape[:2]
+    path = Path(path)
+    gt_savepath = Path(path / output_dir / "gt").resolve()
+    gt_savepath.mkdir(exist_ok=True)
+    image_fetcher = ImageFetcher(path, path / "gt", prefix, "tif", "png")
+    est_total_tiles = image_fetcher.estimate_num_tiles(overlap_step)
+    with tqdm(total=est_total_tiles) as pbar:
+        for (name, input_slide, target_slide) in image_fetcher.yield_pair():
+            width, height = target_slide.size
             x_coords, y_coords = np.mgrid[
-                0 : dim_x : overlap_step.x, 0 : dim_y : overlap_step.y
+                0 : width : overlap_step.x, 0 : height : overlap_step.y
             ]
             points = np.c_[x_coords.ravel(), y_coords.ravel()]
             num_points = points.shape[0]
             for current_point in range(num_points):
                 x, y = points[current_point, :]
-                res_x = input_slide[x : x + size.x, y : y + size.y, :]
-                res_y = target_slide[x : x + size.x, y : y + size.y, :]
-                change = False
-                if (x + size.x) > dim_x:
-                    x = dim_x - size.x
-                    change = True
-                if (y + size.y) > dim_y:
-                    y = dim_y - size.y
-                    change = True
-                if change:
-                    res_x = input_slide[x : x + size.x, y : y + size.y, :]
-                    res_y = target_slide[x : x + size.x, y : y + size.y, :]
+                if y > height - size.y:
+                    y = height - size.y
+                if x > width - size.x:
+                    x = width - size.x
+                dx = x + size.x
+                dy = y + size.y
+                res_x = input_slide[x:dx, y:dy].swapaxes(0,1)
+                res_y: Image.Image = target_slide.crop((x, y, dx, dy))
                 # Check if res_y should be discarded according to filter_dict
                 keep = True
                 if isinstance(filter_dict, dict):
@@ -146,33 +161,34 @@ def create_samples(
                             keep = False
                 if keep:
                     imsave(
-                        path + output_dir + f"/{name}_{current_point:0>4d}.png",
+                        path / output_dir / f"{name}_{current_point:0>4d}.png",
                         res_x,
                         check_contrast=False,
                     )
-                    write_png(
-                        path + output_dir + f"/gt/{name}_{current_point:0>4d}.png",
-                        res_y,
-                        use_palette=True,
+                    res_y.save(
+                        gt_savepath / f"{name}_{current_point:0>4d}.png",
+                        format="PNG",
+                        mode="P",
+                        compress_level=1,
                     )
                 if keep and duplication_list is not None:
                     for color in duplication_list:
                         if duplicate_tile(res_y, color):
                             imsave(
-                                path
-                                + output_dir
-                                + f"/{name}_dup_{current_point:0>4d}.png",
+                                Path(path,
+                                output_dir,
+                                f"{name}_dup_{current_point:0>4d}.png"),
                                 res_x,
                                 check_contrast=False,
                             )
-                            write_png(
-                                path
-                                + output_dir
-                                + f"/gt/{name}_dup_{current_point:0>4d}.png",
-                                res_y,
-                                use_palette=True,
+                            res_y.save(
+                                Path(gt_savepath,
+                                f"{name}_dup_{current_point:0>4d}.png"),
+                                format="PNG",
+                                mode="P",
+                                compress_level=1,
                             )
-            pbar.update(1)
+                pbar.update(1)
 
 
 class ImageFetcher:
@@ -190,7 +206,7 @@ class ImageFetcher:
     """
 
     def __init__(
-        self, input_path: str, target_path: str, prefix, input_ext: str, target_ext: str
+        self, input_path: Path, target_path: Path, prefix, input_ext: str, target_ext: str
     ):
         """Create new instance of ImageFetcher object
 
@@ -221,7 +237,7 @@ class ImageFetcher:
         """
         return len(self.input_dict)
 
-    def fetch_list(self, path: str, prefix: str, ext="tif") -> dict:
+    def fetch_list(self, path: Path, prefix: str, ext="tif") -> Dict[str, Path]:
         """fetch filenames from path. The keys are truncated file IDs
 
         Parameters
@@ -239,41 +255,74 @@ class ImageFetcher:
             dictionary of image arrays
         """
 
-        search_string = [prefix, "*.", ext]
-        slide_files = sorted(glob(join(path, "".join(search_string))), key=str.lower)
+        slide_files = sorted(path.glob(f"{prefix}*.{ext}"), key=lambda x: str(x).lower())
         file_dict = OrderedDict()
         for file in slide_files:
             file_id = (
-                "-".join(splitext(split(file)[1])[0].split("-")[1:]).replace(
-                    "-corrected", ""
-                )
+                "-".join(file.stem.split("-")[1:]).replace("-corrected", "")
                 if prefix
-                else splitext(split(file)[1])[0]
+                else str(file.stem)
             )
             file_dict[file_id] = file
         return file_dict
 
-    def yield_pair(self):
+    def yield_pair(self) -> Iterator[Tuple[str, np.ndarray, Image.Image]]:
         """Yield example-target pair
 
         Yields:
-            tuple[np.array, np.array]: N-D matrices of example image
+            tuple[str, np.array, Image]: N-D matrices of example image
                 and corresponding target image
         """
         input_kwargs = {
             "kwarg": {"plugin": "tifffile"},
         }
         target_kwargs = {
-            "kwarg": {"pilmode": "RGB"},
+            "kwarg": {"mode": "P"},
         }
 
         for name, input_img_path in self.input_dict.items():
             target_img_path = self.target_dict[name]
             yield (
                 name,
-                imread(input_img_path, **input_kwargs["kwarg"]),
-                imread(target_img_path, **target_kwargs["kwarg"]),
+                imread(input_img_path, **input_kwargs["kwarg"]).swapaxes(0,1),
+                self.open(target_img_path),
             )
+
+    @staticmethod
+    def open(image: Path) -> Image.Image:
+        """Open an image file.
+
+        Args:
+            image (Path): path to image file
+        Returns:
+            Image.Image: PIL Image object
+        """
+        try:
+            img = Image.open(image)
+        except UnidentifiedImageError:
+            img = Image.fromarray(tifread(image))
+        return img
+
+    def estimate_num_tiles(self, overlap_step: Size) -> int:
+        """Estimate the total number of tiles in the input file.
+
+        Args:
+            overlap_step (Size): amount of overlap for neighbouring tiles
+
+        Returns:
+            int: Number of tiles that will result from the listed images
+        """
+        list_of_images = list(self.input_dict.values())
+        total_tiles = 0
+        for name in list_of_images:
+            img = self.open(name)
+            dim_y, dim_x = img.size
+            x_coords, y_coords = np.mgrid[
+                0 : dim_x : overlap_step.x, 0 : dim_y : overlap_step.y
+            ]
+            points = np.c_[x_coords.ravel(), y_coords.ravel()]
+            total_tiles += points.shape[0]
+        return total_tiles
 
 
 def duplicate_tile(tile, label_color):
@@ -287,6 +336,12 @@ def duplicate_tile(tile, label_color):
         [type]: [description]
     """
     detection_threshold = 0.05
+    if isinstance(tile, Image.Image):
+        total_pixels = sum(tile.histogram())
+        class_pixels = tile.histogram()[label_color]
+        if class_pixels >= total_pixels * detection_threshold:
+            return True
+        return False
     segmap = np.logical_and.reduce(tile == label_color, axis=-1)
     if segmap.sum() >= segmap.size * detection_threshold:
         return True
@@ -294,7 +349,7 @@ def duplicate_tile(tile, label_color):
 
 
 def check_class(
-    segmap, class_colors, probability=0.9, lower_threshold=0.9, upper_threshold=None
+    segmap, class_color, probability=0.9, lower_threshold=0.9, upper_threshold=None
 ):
     """ Filter input based on how much of a given class is present in the input image.
     Returns True if image should be filtered.
@@ -318,10 +373,19 @@ def check_class(
                             defaults to None)
     :type upper_threshold: float or None
     """
-    assert hasattr(class_colors, "__iter__"), "class_colors must be a list of lists!"
+    if isinstance(segmap, Image.Image):
+        total_pixels = sum(segmap.histogram())
+        class_pixels = segmap.histogram()[class_color]
+        if (
+            upper_threshold is not None
+            and class_pixels >= total_pixels * upper_threshold
+        ):
+            return True
+        if class_pixels >= total_pixels * lower_threshold:
+            return np.random.rand() > 1 - probability
+        return False
     template = np.zeros(segmap.shape[:-1])
-    for class_color in class_colors:
-        template += np.logical_and.reduce(segmap == class_color, axis=-1)
+    template += np.logical_and.reduce(segmap == class_color, axis=-1)
     if (
         upper_threshold is not None
         and template.sum() >= template.size * upper_threshold
@@ -643,6 +707,21 @@ def move_files_in_dir(src_dir: str, dst_dir: str, pattern=None) -> None:
     else:
         print("src_dir & dst_dir should be directories")
 
+def dump(obj, method=print):
+    """Dump all attributes of an object to a key-value formatted string.
+    each attribute is given as the parameter to 'method' (defaults to 'print')
+
+    Args:
+        obj ([type]): [description]
+        method ([type], optional): [description]. Defaults to print.
+    """
+    for attr in dir(obj):
+        if (attr.startswith('__') and attr.endswith('__')) or attr == 'img_tiler':
+            continue
+        if attr in ('tile_list', '_tile_list', 'tile_coords'):
+            method("len(obj.%s) = %r" % (attr, len(getattr(obj, attr))))
+        else:
+            method("obj.%s = %r" % (attr, getattr(obj, attr)))
 
 class ImageTiler:
     """Create tiles from a TIFF image file and store them as a
@@ -674,7 +753,14 @@ class ImageTiler:
                 raise ValueError(f"Invalid extension '{force_extension}'")
             self.extension = f".{force_extension}"
 
+        dump(self, method=logger.debug)
+
         self._set_tile_list()
+        if self._tile_list:
+            try:
+                self._mimick_tile_generation()
+            except IndexError:
+                self._generate_tiles()    
         if not self._tile_list:
             self._generate_tiles()
 
@@ -701,15 +787,13 @@ class ImageTiler:
             self._tile_list = sorted(
                 self.tile_path.glob(f"{self.basename}_*{self.extension}")
             )
-            if self._tile_list:
-                self._mimick_tile_generation()
         elif self.tile_path.is_file():
             raise NotADirectoryError(f"The directory name is invalid: {self.tile_path}")
         else:
             self.tile_path.mkdir(exist_ok=True)
 
     def _mimick_tile_generation(self):
-        for k, (_, bbox) in enumerate(self._crop()):
+        for k, (_, bbox) in enumerate(self._crop(sim=True)):
             fp = self._tile_list[k]
             self.tile_coords[fp] = bbox
 
@@ -718,16 +802,17 @@ class ImageTiler:
         to tile_list.
         """
         for k, (tile, bbox) in enumerate(self._crop()):
-            img = Image.new("RGB", (self.height, self.width), (0, 0, 0))
-            img.paste(tile)
-            fp = os.path.join(
-                self.tile_path, f"{self.basename}_{k:04d}{self.extension}"
-            )
+            # img = Image.new("RGB", (self.height, self.width), (0, 0, 0))
+            # img.paste(tile)
+            if self.tile_path.stem == self.basename:
+                fp = Path(self.tile_path, f"tile_{k:04d}{self.extension}")
+            else:
+                fp = Path(self.tile_path, f"{self.basename}_{k:04d}{self.extension}")
             self._tile_list.append(fp)
             self.tile_coords[fp] = bbox
-            img.save(fp)
+            tile.save(fp)
 
-    def _crop(self):
+    def _crop(self, sim=False) -> Iterator[Tuple[Image.Image, Tuple[int, int, int, int]]]:
         """Divide the specified image into tiles no larger than the
         specified height and width and yield them in sequence.
 
@@ -735,12 +820,18 @@ class ImageTiler:
         -------
         Image._ImageCrop
             A tile of the specified image
+        Tuple[int]
+            Corner coordinates of the yielded crop box
         """
+        if sim:
+            dummy = Image.new("RGB", (self.width, self.height), (0, 0, 0))
         for y in range(0, self.img_height - self.overlap, self.height - self.overlap):
             for x in range(0, self.img_width - self.overlap, self.width - self.overlap):
-                dx = min(x + self.width, self.img_width)
-                dy = min(y + self.height, self.img_height)
+                dx: int = min(x + self.width, self.img_width)
+                dy: int = min(y + self.height, self.img_height)
                 box = (x, y, dx, dy)
+                if sim:
+                    yield dummy, box
                 yield self.img.crop(box), box
 
     def dump(self, fp: str):
@@ -770,13 +861,13 @@ class ImageTiler:
         self.width, self.height = data["tile_dimensions"]
         self.overlap = data["overlap"]
         self.img_width, self.img_height = data["img_dimensions"]
-        self._tile_list = sorted(list(self.tile_coords.keys()))
+        self._tile_list = sorted([Path(s) for s in self.tile_coords.keys()])
 
     def remove(self):
         """Remove all tiles
         """
         for file in self._tile_list:
-            file.unlink()
+            file.unlink(missing_ok=True)
         self.tile_path.rmdir()
 
     def __getitem__(self, index):
@@ -823,7 +914,6 @@ class ImageAssembler:
                 Defaults to None.
         """
         self.img_path = Path(output_path)
-        self.tile_coords = None
         self.width, self.height = 0, 0
         self.overlap = 0
         self.img_width, self.img_height = 0, 0
@@ -835,15 +925,14 @@ class ImageAssembler:
             self.tile_coords = self.img_tiler.tile_coords
             self.width, self.height = self.img_tiler.width, self.img_tiler.height
             self.overlap = self.img_tiler.overlap
-            self.img_width, self.img_height = (
-                self.img_tiler.img_width,
-                self.img_tiler.img_height,
-            )
+            self.img_width = self.img_tiler.img_width
+            self.img_height = self.img_tiler.img_height
             self.ext = self._get_extension(self._tile_list[0])
         else:
             self.load(tile_info)
         if ext:
             self.ext = ext
+        dump(self, method=logger.debug)
 
     def load(self, file_path: Union[str, Path]):
         """Load tile information from file
@@ -854,23 +943,24 @@ class ImageAssembler:
         self.width, self.height = data["tile_dimensions"]
         self.overlap = data["overlap"]
         self.img_width, self.img_height = data["img_dimensions"]
-        self._tile_list = list(self.tile_coords.keys())
+        self._tile_list = list([Path(s) for s in self.tile_coords.keys()])
         self.ext = self._get_extension(self._tile_list[0])
 
     def _get_extension(self, tile_path):
         return os.path.splitext(tile_path)[-1]
 
-    def read_tiff(self, path: Union[str, Path]) -> np.ndarray:
+    def read_tiff(self, path: Union[str, Path]) -> cp.ndarray:
         """
         path - Path to the multipage-tiff file
 
         returns: n-channel image with the leading dimension being the channels
         """
-        _, img = cv.imreadmulti(path, flags=cv.IMREAD_ANYDEPTH)
+        #_, img = cv.imreadmulti(path, flags=cv.IMREAD_ANYDEPTH)
+        img = tifread(path)
         ndimg = cp.array(img)
         return ndimg
 
-    def merge(self, colors=None, **pil_kwargs):
+    def merge(self, colors: np.ndarray=None, **pil_kwargs):
         """Merge tiles into complete image
 
         For softmaxed input, supply a color vector.
@@ -881,24 +971,25 @@ class ImageAssembler:
         """
         img = Image.new("RGB", (self.img_width, self.img_height), (0, 0, 0))
         multi_frame = False
-
+        logger.debug(f"{colors = }")
         if colors is not None:
             palette = colors.flatten().tolist()
-            color_map = np.ndarray(shape=(256 * 256 * 256), dtype="int32")
-            color_map[:] = -1
-            color_codes = {i: colors[i] for i in range(len(colors))}
-            for idx, rgb in color_codes.items():
-                rgb = rgb[0] * 65536 + rgb[1] * 256 + rgb[2]
-                color_map[rgb] = idx
+            # color_map = np.ndarray(shape=(256 * 256 * 256), dtype="int32")
+            # color_map[:] = -1
+            # color_codes = {i: colors[i] for i in range(len(colors))}
+            # for idx, rgb in color_codes.items():
+            #     rgb = rgb[0] * 65536 + rgb[1] * 256 + rgb[2]
+            #     color_map[rgb] = idx
         else:
             palette = None
-
+        logger.debug(f"{palette = }")
         # def to_palette(image):
         #     image = image.dot(np.array([65536, 256, 1], dtype="int32"))
         #     return color_map[image].astype("uint8")
 
-        for _, (fp, (x, y, _, _)) in enumerate(sorted(self.tile_coords.items())):
-            fp = f"{os.path.splitext(fp)[0]}{self.ext}"
+        for _, (fp, bbox) in enumerate(sorted(self.tile_coords.items())):
+            fp = Path(fp).with_suffix(self.ext)
+            x, y = bbox[:2]
             if not multi_frame:
                 with Image.open(fp) as tile:
                     if tile.n_frames > 1:
@@ -908,28 +999,38 @@ class ImageAssembler:
 
             if multi_frame:
                 tile = self.read_tiff(fp)
+                #logger.debug(f"{tile.shape = }")
                 if colors is not None:
                     if img.mode == "RGB":
                         img = img.convert(mode="P")
-                    if tile.shape[:-1] == (self.width, self.height):  # channels last
-                        sparse_tile = cp.argmax(tile, axis=-1)
-                    else:  # channels first
-                        sparse_tile = cp.argmax(tile, axis=0)
+                        img.putpalette(palette)
+                    sparse_tile = cp.argmax(tile, axis=-1)
+                    #logger.debug(f"{sparse_tile.shape = }")
                     pil_kwargs["format"] = "PNG"
                     pil_kwargs["mode"] = "P"
                     pil_kwargs["compress_level"] = 1
-                    uint_tile = sparse_tile.get()
+                    uint_tile: np.ndarray = sparse_tile.get()
                     uint_tile = uint_tile.astype(np.uint8)
                     tile = Image.fromarray(uint_tile, mode="P")
+                    tile.putpalette(palette)
 
-            mask = np.full((self.width, self.height), 255, dtype="uint8")
+            mask = np.full(tile.size, 255, dtype="uint8")
             if y > 0:
                 mask[: self.overlap // 2, :] = 0
             if x > 0:
                 mask[:, : self.overlap // 2] = 0
-            mask = Image.fromarray(mask)
+            mask = Image.fromarray(mask.T)
+            box = bbox[:2]
+            try:
+                img.paste(tile, box, mask)
+            except ValueError as err:
+                logger.error("Error during paste operation")
+                logger.error(f"Current tile path: {fp}")
+                logger.error(f"{img.size = }, {tile.size = }, {box = }, {mask.size = }")
+                logger.error(f"{img.mode = }, {tile.mode = }")
+                logger.exception(f"{type(tile) = }, {type(box) = }, {type(mask) = }", exc_info=err)
+                img.paste(tile, tuple([float(x), float(y)]), mask)
 
-            img.paste(tile, (x, y), mask)
             # TODO Generalize to other formats
         if colors is not None:
             img = img.convert(mode="P")

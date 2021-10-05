@@ -5,29 +5,62 @@ import datetime
 import os
 import os.path as osp
 from collections import OrderedDict
+from pathlib import Path
 from glob import glob
-from typing import Any, Dict, Union
+from typing import Any, Dict, List, Union
 
 import numpy as np
 import tensorflow as tf
 import tensorflow_addons as tfa
+
 # from keras_radam import RAdam
 from tensorflow.keras.activations import selu, sigmoid, tanh
-from tensorflow.keras.callbacks import (Callback, CSVLogger, EarlyStopping,
-                                        LambdaCallback, ReduceLROnPlateau)
-from tensorflow.keras.layers import (ELU, LeakyReLU, PReLU, ReLU, Softmax,
-                                     ThresholdedReLU)
-from tensorflow.keras.losses import (binary_crossentropy,
-                                     categorical_crossentropy, mae, mse)
+from tensorflow.keras.callbacks import (
+    Callback,
+    CSVLogger,
+    EarlyStopping,
+    LambdaCallback,
+    ReduceLROnPlateau,
+)
+from tensorflow.keras.layers import (
+    ELU,
+    LeakyReLU,
+    PReLU,
+    ReLU,
+    Softmax,
+    ThresholdedReLU,
+)
+from tensorflow.keras.losses import (
+    binary_crossentropy,
+    categorical_crossentropy,
+    mae,
+    mse,
+)
+
 # from keras_contrib.callbacks import DeadReluDetector
-from tensorflow.keras.optimizers import (SGD, Adadelta, Adagrad, Adam, Adamax,
-                                         Nadam, RMSprop)
+from tensorflow.keras.optimizers import (
+    SGD,
+    Adadelta,
+    Adagrad,
+    Adam,
+    Adamax,
+    Nadam,
+    RMSprop,
+)
 from tensorflow.python import keras
 from tf_mmciad.utils.callbacks import (  # DeadReluDetector
-    LossAndAccTextingCallback, PatchedModelCheckpoint, TensorBoardWrapper)
-from tf_mmciad.utils.custom_loss import (categorical_focal_loss, jaccard1_coef,
-                                         jaccard1_loss, jaccard2_loss,
-                                         tversky_loss, weighted_loss)
+    LossAndAccTextingCallback,
+    PatchedModelCheckpoint,
+    TensorBoardWrapper,
+)
+from tf_mmciad.utils.custom_loss import (
+    categorical_focal_loss,
+    jaccard1_coef,
+    jaccard1_loss,
+    jaccard2_loss,
+    tversky_loss,
+    weighted_loss,
+)
 from tf_mmciad.utils.f_scores import F1Score
 from tf_mmciad.utils.generator import DataGenerator
 from tf_mmciad.utils.swish import Swish
@@ -168,6 +201,7 @@ class LogSegmentationProgress(Callback):
         self.tb_params = tensorboard_params
         self.path = self.tb_params.pop("path")
         self.color_dict = self.tb_params.pop("color_dict")
+        self.color_list = self.tb_params.pop("color_list")
         self.means = self.tb_params.pop("means")
         self.stds = self.tb_params.pop("stds")
         self.x_min = self.tb_params.pop("x_min")
@@ -180,6 +214,7 @@ class LogSegmentationProgress(Callback):
             self.x_min,
             self.x_max,
         ]
+        self.color_map = self.make_color_map(self.color_dict)
 
     def on_epoch_end(self, epoch, logs=None):
         _ = logs
@@ -196,10 +231,12 @@ class LogSegmentationProgress(Callback):
         raw_input = (norm_input * self.stds) + self.means
         raw_input = np.round(raw_input).astype(np.uint8)
         # recreate color matrix
-        palette = np.array(list(self.color_dict.values()), dtype="uint8",)
+        # palette = np.array(list(self.color_dict.values()), dtype="uint8",)
         # convert one-hot encoded matrices to RBG
-        cat_pred = palette[test_pred]
-        cat_targets = palette[np.argmax(targets, axis=-1)]
+        cat_pred = self.color_list[test_pred].astype("uint8")
+        cat_targets = self.color_list[np.argmax(targets, axis=-1)].astype("uint8")
+        # cat_pred = palette[test_pred]
+        #cat_targets = palette[np.argmax(targets, axis=-1)]
         # Log the image summaries.
         with self.file_writer.as_default():
             tf.summary.image("Raw input", raw_input, max_outputs=8, step=epoch)
@@ -208,6 +245,22 @@ class LogSegmentationProgress(Callback):
 
     def set_model(self, model):
         self.model = model
+
+    def make_color_map(self, colors: Dict[int, List[int]]):
+        """Create a new RGB map from a dictionary of color values.
+
+        Args:
+            colors (Dict[int, List[int]]): [description]
+
+        Returns:
+            [type]: [description]
+        """
+        color_map = np.ndarray(shape=(256 * 256 * 256), dtype="int32")
+        color_map[:] = -1
+        for idx, rgb_list in colors.items():
+            rgb = rgb_list[0] * 65536 + rgb_list[1] * 256 + rgb_list[2]
+            color_map[rgb] = idx
+        return color_map
 
 
 def single_run(
@@ -243,35 +296,35 @@ def single_run(
 
     if not os.path.exists(model_base_path):
         os.makedirs(model_base_path, exist_ok=True)
-    p = OrderedDict()
-    p.update(params)
-    loss_func = get_loss_function(p["loss_func"])
-    act_func = get_act_function(p["act"])
-    opt_func = get_opt_function(p["opt"])
+    param_dict = OrderedDict()
+    param_dict.update(params)
+    loss_func = get_loss_function(param_dict["loss_func"])
+    act_func = get_act_function(param_dict["act"])
+    opt_func = get_opt_function(param_dict["opt"])
 
     if debug:
-        p["steps_per_epoch"] = 2
-        p["nb_epoch"] = 2
+        param_dict["steps_per_epoch"] = 2
+        param_dict["nb_epoch"] = 2
         global CRASH_COUNT  # pylint: disable=global-statement
         CRASH_COUNT += 1
         if CRASH_COUNT == 3:
             raise KeyboardInterrupt()
 
-    if p["class_weights"] is False and cls_wgts is None:
+    if param_dict["class_weights"] is False and cls_wgts is None:
         class_weights = None
-    elif p["class_weights"] is False:
+    elif param_dict["class_weights"] is False:
         class_weights = {i: 1 if k != 12 else 0 for i, k in enumerate(cls_wgts.keys())}
     else:
         class_weights = cls_wgts
 
-    if str(p["arch"]).lower() == "u-resnet":
-        p["maxpool"] = False
+    if str(param_dict["arch"]).lower() == "u-resnet":
+        param_dict["maxpool"] = False
         # p["pretrain"] = 0
         # p["nb_filters_0"] = 32
         # p["depth"] = 3
 
-    model_base_path = osp.join(weight_path, p["date"])
-    tensorboard_base_path = osp.join("logs", p["date"])
+    model_base_path = osp.join(weight_path, param_dict["date"])
+    tensorboard_base_path = osp.join("logs", param_dict["date"])
 
     if not os.path.exists(model_base_path):
         os.makedirs(model_base_path, exist_ok=True)
@@ -292,18 +345,18 @@ def single_run(
         f.write(f"\nTraining started: {now}\n")
 
     model_kwargs = {
-        "shape": p["shape"],
-        "nb_filters": int(p["nb_filters_0"]),
-        "sigma_noise": p["sigma_noise"],
-        "depth": p["depth"],
-        "maxpool": p["maxpool"],
-        "initialization": p["init"],
+        "shape": param_dict["shape"],
+        "nb_filters": int(param_dict["nb_filters_0"]),
+        "sigma_noise": param_dict["sigma_noise"],
+        "depth": param_dict["depth"],
+        "maxpool": param_dict["maxpool"],
+        "initialization": param_dict["init"],
         "activation": act_func,
-        "dropout": p["dropout"],
-        "output_channels": p["num_cls"],
-        "batchnorm": p["batchnorm"],
-        "pretrain": p["pretrain"],
-        "arch": p["arch"],
+        "dropout": param_dict["dropout"],
+        "output_channels": param_dict["num_cls"],
+        "batchnorm": param_dict["batchnorm"],
+        "pretrain": param_dict["pretrain"],
+        "arch": param_dict["arch"],
     }
     csv_logger = CSVLogger(modelpath + ".fit.csv", append=True)
 
@@ -317,10 +370,10 @@ def single_run(
     )
 
     early_stopping = EarlyStopping(
-        monitor="loss", min_delta=0.0001, patience=15, verbose=0, mode="auto"
+        monitor="val_loss", min_delta=0.0001, patience=6, verbose=0, mode="auto"
     )
     reduce_lr_on_plateau = ReduceLROnPlateau(
-        monitor="loss", factor=0.1, patience=5, min_lr=1e-8, verbose=1
+        monitor="val_loss", factor=0.1, patience=3, min_lr=1e-8, verbose=1
     )
     jaccard_model_checkpoint = PatchedModelCheckpoint(
         modelpath + "_epoch_{epoch}_val_jacc1_{val_jaccard1_coef:0.4f}.h5",
@@ -341,10 +394,10 @@ def single_run(
         save_best_only=True,
     )
 
-    f1_average = F1Score(num_classes=p["num_cls"], average="weighted")
+    f1_average = F1Score(num_classes=param_dict["num_cls"], average="weighted")
     f1_per_class = [
-        F1Score(num_classes=p["num_cls"], average="report", focus=i)
-        for i in range(p["num_cls"])
+        F1Score(num_classes=param_dict["num_cls"], average="report", focus=i)
+        for i in range(param_dict["num_cls"])
     ]
 
     try:
@@ -368,19 +421,22 @@ def single_run(
         model = u_net(**model_kwargs)
         current_epoch = 0
 
-        if p.get("pretrain", 0):
-            pretrain_path = glob(osp.join(weight_path, "imagenet_pretrain", "*.h5"))
-            if len(pretrain_path) == 1:
-                pretrain_path = pretrain_path[0]
+        if param_dict.get("pretrain", 0):
+            pretrain_model = (
+                "imagenet_pretrain"
+                if model_kwargs["nb_filters"] == 64
+                else "imagenet32_pretrain"
+            )
+            pretrain_path = sorted(Path(weight_path, pretrain_model).glob("*.h5"))[-1]
             model.load_weights(pretrain_path, by_name=True, skip_mismatch=True)
             pretrain_layers = [
                 "block{}_d_conv{}".format(block, layer)
-                for block in range(1, p["depth"] + 1)
+                for block in range(1, param_dict["depth"] + 1)
                 for layer in range(1, 3)
             ]
             bn_layers = [
                 "block{}_d_bn{}".format(block, layer)
-                for block in range(1, p["depth"] + 1)
+                for block in range(1, param_dict["depth"] + 1)
                 for layer in range(1, 3)
             ]
             for n in pretrain_layers:
@@ -390,7 +446,7 @@ def single_run(
 
         model.compile(
             loss=loss_func,
-            optimizer=opt_func(p["lr"]),
+            optimizer=opt_func(param_dict["lr"]),
             metrics=["acc", f1_average, *f1_per_class, jaccard1_coef],
         )
 
@@ -420,14 +476,14 @@ def single_run(
 
     history = model.fit(
         x=train_generator,
-        epochs=p["nb_epoch"],
+        epochs=param_dict["nb_epoch"],
         initial_epoch=current_epoch,
         validation_data=val_generator,
         workers=30,
-        steps_per_epoch=p.get("steps_per_epoch", None),
-        validation_steps=p.get("steps_per_epoch", None),
+        steps_per_epoch=param_dict.get("steps_per_epoch", None),
+        validation_steps=param_dict.get("steps_per_epoch", None),
         class_weight=class_weights,
-        verbose=p["verbose"],
+        verbose=param_dict["verbose"],
         callbacks=model_callbacks + opti_callbacks,
     )
     return model, history
@@ -521,37 +577,37 @@ class TalosModel:
         """
         # Dummy inputs
         *_, last = args
-        p = OrderedDict()
-        p.update(self.static_params)
+        param_dict = OrderedDict()
+        param_dict.update(self.static_params)
         if isinstance(last, dict):
             talos_params = last
             self.write_config(talos_params)
-            p.update(talos_params)
+            param_dict.update(talos_params)
         elif isinstance(last, int):
             self.write_config()
-            model_exp_name = last # What was I thinking?
+            # model_exp_name = last # What was I thinking?
         if not isinstance(last, dict) and self.grid_run:
             raise TypeError(f"Expected a dict of parameters, got {type(last)}")
-        loss_func = get_loss_function(p["loss_func"])
-        act_func = get_act_function(p["act"])
-        opt_func = get_opt_function(p["opt"])
+        loss_func = get_loss_function(param_dict["loss_func"])
+        act_func = get_act_function(param_dict["act"])
+        opt_func = get_opt_function(param_dict["opt"])
 
         if self.debug:
-            p["steps_per_epoch"] = 2
-            p["nb_epoch"] = 2  # pylint: disable=global-statement
+            param_dict["steps_per_epoch"] = 2
+            param_dict["nb_epoch"] = 2  # pylint: disable=global-statement
             self.crash_count += 1
             if self.crash_count == 3:
                 raise KeyboardInterrupt()
 
-        if p["class_weights"] is False and self.cls_wgts is None:
+        if param_dict["class_weights"] is False and self.cls_wgts is None:
             class_weights = None
-        elif p["class_weights"] is False:
+        elif param_dict["class_weights"] is False:
             class_weights = [1 if k != 12 else 0 for k in self.cls_wgts.keys()]
         else:
             class_weights = list(self.cls_wgts.values())
 
-        if str(p["arch"]).lower() == "u-resnet":
-            p["maxpool"] = False
+        if str(param_dict["arch"]).lower() == "u-resnet":
+            param_dict["maxpool"] = False
             # p["pretrain"] = 0
             # p["nb_filters_0"] = 32
             # p["depth"] = 3
@@ -564,21 +620,24 @@ class TalosModel:
         tb_path = osp.join(self.tensorboard_base_path, self.model_handle)
 
         model_kwargs = {
-            "shape": p["shape"],
-            "nb_filters": int(p["nb_filters_0"]),
-            "sigma_noise": p["sigma_noise"],
-            "depth": p["depth"],
-            "maxpool": p["maxpool"],
-            "initialization": p["init"],
+            "shape": param_dict["shape"],
+            "nb_filters": int(param_dict["nb_filters_0"]),
+            "sigma_noise": param_dict["sigma_noise"],
+            "depth": param_dict["depth"],
+            "maxpool": param_dict["maxpool"],
+            "initialization": param_dict["init"],
             "activation": act_func,
-            "dropout": p["dropout"],
-            "output_channels": p["num_cls"],
-            "batchnorm": p["batchnorm"],
-            "pretrain": p["pretrain"],
-            "arch": p["arch"],
+            "dropout": param_dict["dropout"],
+            "output_channels": param_dict["num_cls"],
+            "batchnorm": param_dict["batchnorm"],
+            "pretrain": param_dict["pretrain"],
+            "arch": param_dict["arch"],
         }
 
-        f1_per_class = tfa.metrics.F1Score(num_classes=p["num_cls"], average="report")
+        f1_per_class = [
+            F1Score(num_classes=param_dict["num_cls"], average="report", focus=i)
+            for i in range(param_dict["num_cls"])
+        ]
         csv_logger = CSVLogger(self.modelpath + ".fit.csv", append=True)
         if self.notebook:
             tqdm_progress = tfa.callbacks.TQDMProgressBar()
@@ -635,7 +694,7 @@ class TalosModel:
             acc_model_checkpoint,
         ]
 
-        if p["pretrain"] != 0:
+        if param_dict["pretrain"] != 0:
             print(
                 "starting with frozen layers\nclass weights: {}".format(class_weights)
             )
@@ -657,18 +716,18 @@ class TalosModel:
             ]  # , gamify_callback]
             compile_kwargs = {
                 "loss": loss_func,
-                "optimizer": opt_func(p["lr"]),
+                "optimizer": opt_func(param_dict["lr"]),
                 "metrics": ["acc", f1_per_class, jaccard1_coef],
             }
 
             fit_kwargs = {
                 "x": self.train_generator,
-                "epochs": p["nb_frozen"],
+                "epochs": param_dict["nb_frozen"],
                 "validation_data": self.val_generator,
                 "use_multiprocessing": True,
                 "workers": 30,
                 "class_weight": class_weights,
-                "verbose": p["verbose"],
+                "verbose": param_dict["verbose"],
                 "callbacks": model_callbacks,
             }
 
@@ -676,7 +735,7 @@ class TalosModel:
 
             pretrain_layers = [
                 "block{}_d_conv{}".format(block, layer)
-                for block in range(1, p["pretrain"] + 1)
+                for block in range(1, param_dict["pretrain"] + 1)
                 for layer in range(1, 3)
             ]
             for n in pretrain_layers:
@@ -685,8 +744,8 @@ class TalosModel:
 
             fit_kwargs.update(
                 {
-                    "epochs": p["nb_epoch"],
-                    "initial_epoch": p["nb_frozen"],
+                    "epochs": param_dict["nb_epoch"],
+                    "initial_epoch": param_dict["nb_frozen"],
                     "callbacks": model_callbacks + opti_callbacks,
                 }
             )
@@ -698,19 +757,19 @@ class TalosModel:
             # )
             compile_kwargs = {
                 "loss": loss_func,
-                "optimizer": opt_func(p["lr"]),
+                "optimizer": opt_func(param_dict["lr"]),
                 "metrics": ["acc", jaccard1_coef],
             }
 
             fit_kwargs = {
                 "x": self.train_generator,
-                "epochs": p["nb_epoch"],
+                "epochs": param_dict["nb_epoch"],
                 "validation_data": self.val_generator,
                 "workers": 30,
-                "steps_per_epoch": p.get("steps_per_epoch", None),
-                "validation_steps": p.get("steps_per_epoch", None),
+                "steps_per_epoch": param_dict.get("steps_per_epoch", None),
+                "validation_steps": param_dict.get("steps_per_epoch", None),
                 "class_weight": class_weights,
-                "verbose": p["verbose"],
+                "verbose": param_dict["verbose"],
                 "callbacks": model_callbacks + opti_callbacks,
             }
             model = u_net(**model_kwargs)
