@@ -112,7 +112,9 @@ class DataGenerator(tf.keras.utils.Sequence):
             unproc_img = np.array(
                 Image.open(self.path / "gt" / f"{sample_id}.png")
             )
-            proc_img = np.putmask(unproc_img, unproc_img == 0, 1)
+            shape = unproc_img.shape
+            np.putmask(unproc_img, unproc_img == 0, 1)
+            proc_img = unproc_img.reshape(shape)
             target_batch_class[i] = proc_img
             if isinstance(self.remap_labels, dict):
                 self.n_classes = len(self.remap_labels)

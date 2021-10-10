@@ -1,4 +1,8 @@
 from tensorflow.python.ops.gen_math_ops import floor as tffloor
+from tensorflow.python.keras import activations
+from tensorflow.python.keras import constraints
+from tensorflow.python.keras import initializers
+from tensorflow.python.keras import regularizers
 from tensorflow import pad, TensorShape
 from tensorflow.keras.layers import Layer, Conv2D
 from typing import Tuple
@@ -22,10 +26,10 @@ class ReflectionPadding2D(Layer):
             input_shape[3],
         )
 
-    def call(self, input_tensor, mask=None):
+    def call(self, inputs, **kwargs):
         padding_width, padding_height = self.padding
         return pad(
-            input_tensor,
+            inputs,
             [
                 [0, 0],
                 [padding_height, padding_height],
@@ -34,6 +38,44 @@ class ReflectionPadding2D(Layer):
             ],
             "REFLECT",
         )
+    
+    def get_config(self):
+        config = {
+            'filters':
+                self.filters,
+            'kernel_size':
+                self.kernel_size,
+            'strides':
+                self.strides,
+            'padding':
+                self.padding,
+            'data_format':
+                self.data_format,
+            'dilation_rate':
+                self.dilation_rate,
+            'groups':
+                self.groups,
+            'activation':
+                activations.serialize(self.activation),
+            'use_bias':
+                self.use_bias,
+            'kernel_initializer':
+                initializers.serialize(self.kernel_initializer),
+            'bias_initializer':
+                initializers.serialize(self.bias_initializer),
+            'kernel_regularizer':
+                regularizers.serialize(self.kernel_regularizer),
+            'bias_regularizer':
+                regularizers.serialize(self.bias_regularizer),
+            'activity_regularizer':
+                regularizers.serialize(self.activity_regularizer),
+            'kernel_constraint':
+                constraints.serialize(self.kernel_constraint),
+            'bias_constraint':
+                constraints.serialize(self.bias_constraint)
+        }
+        base_config = super().get_config()
+        return dict(list(base_config.items()) + list(config.items()))
 
 
 class MyConv2D(Conv2D):
@@ -127,10 +169,10 @@ class MyConv2D(Conv2D):
                 + self._spatial_output_shape(input_shape[batch_rank + 1 :])
             )
 
-    def call(self, input_tensor, mask=None):
+    def call(self, inputs):
         padding_width, padding_height = self.internal_padding
         padded_tensor = pad(
-            input_tensor,
+            inputs,
             [
                 [0, 0],
                 [padding_height, padding_height],
@@ -140,3 +182,41 @@ class MyConv2D(Conv2D):
             "REFLECT",
         )
         return super().call(padded_tensor)
+
+    def get_config(self):
+        config = {
+            'filters':
+                self.filters,
+            'kernel_size':
+                self.kernel_size,
+            'strides':
+                self.strides,
+            'padding':
+                self.padding,
+            'data_format':
+                self.data_format,
+            'dilation_rate':
+                self.dilation_rate,
+            'groups':
+                self.groups,
+            'activation':
+                activations.serialize(self.activation),
+            'use_bias':
+                self.use_bias,
+            'kernel_initializer':
+                initializers.serialize(self.kernel_initializer),
+            'bias_initializer':
+                initializers.serialize(self.bias_initializer),
+            'kernel_regularizer':
+                regularizers.serialize(self.kernel_regularizer),
+            'bias_regularizer':
+                regularizers.serialize(self.bias_regularizer),
+            'activity_regularizer':
+                regularizers.serialize(self.activity_regularizer),
+            'kernel_constraint':
+                constraints.serialize(self.kernel_constraint),
+            'bias_constraint':
+                constraints.serialize(self.bias_constraint)
+        }
+        base_config = super().get_config()
+        return dict(list(base_config.items()) + list(config.items()))

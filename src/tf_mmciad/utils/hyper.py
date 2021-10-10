@@ -49,7 +49,6 @@ from tensorflow.keras.optimizers import (
 )
 from tensorflow.python import keras
 from tf_mmciad.utils.callbacks import (  # DeadReluDetector
-    LossAndAccTextingCallback,
     PatchedModelCheckpoint,
     TensorBoardWrapper,
 )
@@ -273,6 +272,7 @@ def single_run(
     notebook=True,
     debug=False,
     resume=False,
+    resume_on_error=False,
 ):
     """Run a single instance of training using the static parameters in the config file
 
@@ -325,9 +325,6 @@ def single_run(
 
     model_base_path = osp.join(weight_path, param_dict["date"])
     tensorboard_base_path = osp.join("logs", param_dict["date"])
-
-    if not os.path.exists(model_base_path):
-        os.makedirs(model_base_path, exist_ok=True)
     basename = "model"
 
     suffix = datetime.datetime.now().strftime("%y-%m-%d_%H%M%S")
@@ -359,7 +356,6 @@ def single_run(
         "arch": param_dict["arch"],
     }
     csv_logger = CSVLogger(modelpath + ".fit.csv", append=True)
-
     tb_callback = TensorBoardWrapper(
         val_generator,
         log_dir=tb_path,
@@ -368,53 +364,46 @@ def single_run(
         embeddings_freq=0,
         update_freq="epoch",
     )
-
     early_stopping = EarlyStopping(
-        monitor="val_loss", min_delta=0.0001, patience=6, verbose=0, mode="auto"
+        monitor="val_loss", min_delta=0.0001, patience=5, verbose=0, mode="auto"
     )
     reduce_lr_on_plateau = ReduceLROnPlateau(
         monitor="val_loss", factor=0.1, patience=3, min_lr=1e-8, verbose=1
     )
     jaccard_model_checkpoint = PatchedModelCheckpoint(
-        modelpath + "_epoch_{epoch}_val_jacc1_{val_jaccard1_coef:0.4f}.h5",
+        modelpath + "_epoch_{epoch}_val_jacc1_{val_jaccard1_coef:0.4f}",
         verbose=0,
         monitor="val_jaccard1_coef",
         save_best_only=True,
     )
     loss_model_checkpoint = PatchedModelCheckpoint(
-        modelpath + "_epoch_{epoch}_val_loss_{val_loss:0.4f}.h5",
+        modelpath + "_epoch_{epoch}_val_loss_{val_loss:0.4f}",
         verbose=0,
         monitor="val_loss",
         save_best_only=True,
     )
-    acc_model_checkpoint = PatchedModelCheckpoint(
-        modelpath + "_epoch_{epoch}_acc_{acc:0.4f}.h5",
-        verbose=0,
-        monitor="acc",
-        save_best_only=True,
-    )
-
-    f1_average = F1Score(num_classes=param_dict["num_cls"], average="weighted")
+    #f1_average = F1Score(num_classes=param_dict["num_cls"], average="weighted")
     f1_per_class = [
         F1Score(num_classes=param_dict["num_cls"], average="report", focus=i)
         for i in range(param_dict["num_cls"])
     ]
 
+    cat_fl = categorical_focal_loss()
+    custom_objs = {
+        "Swish": Swish,
+        "F1Score": F1Score,
+        "cat_CE": categorical_crossentropy,
+        "tversky_loss": tversky_loss,
+        "categorical_focal_loss_fixed": cat_fl,
+        "jaccard1_coef": jaccard1_coef,
+        "jaccard2_loss": jaccard2_loss,
+        "cat_FL": cat_fl,
+    }
     try:
-        latest_model = glob(modelpath + "_epoch_*_acc_*.h5")[0]
+        latest_model = glob(modelpath + "*_val_loss_*.h5")[0]
     except IndexError:
         resume = False
     if resume:
-        cat_fl = categorical_focal_loss()
-        custom_objs = {
-            "Swish": Swish,
-            "F1Score": F1Score,
-            "cat_CE": categorical_crossentropy,
-            "tversky_loss": tversky_loss,
-            "categorical_focal_loss_fixed": cat_fl,
-            "jaccard1_coef": jaccard1_coef,
-            "cat_FL": cat_fl,
-        }
         current_epoch = latest_model.rsplit("_")[4] + 1
         model = keras.models.load_model(latest_model, custom_objects=custom_objs)
     else:
@@ -447,7 +436,7 @@ def single_run(
         model.compile(
             loss=loss_func,
             optimizer=opt_func(param_dict["lr"]),
-            metrics=["acc", f1_average, *f1_per_class, jaccard1_coef],
+            metrics=["acc", *f1_per_class, jaccard1_coef],
         )
 
     file_writer_seg = tf.summary.create_file_writer(tb_path + "/images")
@@ -471,21 +460,30 @@ def single_run(
         reduce_lr_on_plateau,
         loss_model_checkpoint,
         jaccard_model_checkpoint,
-        acc_model_checkpoint,
     ]
 
-    history = model.fit(
-        x=train_generator,
-        epochs=param_dict["nb_epoch"],
-        initial_epoch=current_epoch,
-        validation_data=val_generator,
-        workers=30,
-        steps_per_epoch=param_dict.get("steps_per_epoch", None),
-        validation_steps=param_dict.get("steps_per_epoch", None),
-        class_weight=class_weights,
-        verbose=param_dict["verbose"],
-        callbacks=model_callbacks + opti_callbacks,
-    )
+    if resume_on_error:
+        latest_model = sorted(Path(model_base_path).glob("*_val_jacc1_*"))[0]
+        model = tf.keras.models.load_model(latest_model, custom_objects=custom_objs)
+    else:
+        history = model.fit(
+            x=train_generator,
+            epochs=param_dict["nb_epoch"],
+            initial_epoch=current_epoch,
+            validation_data=val_generator,
+            workers=30,
+            steps_per_epoch=param_dict.get("steps_per_epoch", None),
+            validation_steps=param_dict.get("steps_per_epoch", None),
+            class_weight=class_weights,
+            verbose=param_dict["verbose"],
+            callbacks=model_callbacks + opti_callbacks,
+        )
+        model.load_weights(sorted(Path(model_base_path).glob("*jacc*"))[0])
+    savedmodel_path = Path(model_base_path, "saved_model")
+    savedmodel_path.mkdir(exist_ok=True, parents=True)
+    model.save(savedmodel_path, save_format="tf")
+    if resume_on_error:
+        return model, {'epoch': [0,]}
     return model, history
 
 
@@ -682,7 +680,6 @@ class TalosModel:
         model_callbacks = [
             csv_logger,
             tb_callback,
-            LossAndAccTextingCallback(),
         ]  # , gamify_callback]
         if self.notebook:
             model_callbacks.append(tqdm_progress)

@@ -85,7 +85,7 @@ def dice2_loss(y_true, y_pred, smooth=SMOOTH):
     """
     return 1 - dice2_coef(y_true, y_pred, smooth)
 
-
+@tf.function
 def jaccard2_coef(y_true, y_pred, smooth=SMOOTH):
     """Jaccard squared index coefficient
 
@@ -98,13 +98,13 @@ def jaccard2_coef(y_true, y_pred, smooth=SMOOTH):
     :return: Jaccard coefficient
     :rtype: float
     """
-    y_true_f = K.flatten(tf.cast(y_true, dtype=tf.float32))
+    y_true_f = K.flatten(tf.cast(y_true, tf.float32))
     y_pred_f = K.flatten(y_pred)
     intersection = K.sum(y_true_f * y_pred_f)
     union = K.sum(y_true_f * y_true_f) + K.sum(y_pred_f * y_pred_f) - intersection
     return (intersection + smooth) / (union + smooth)
 
-
+@tf.function
 def jaccard2_loss(y_true, y_pred, smooth=SMOOTH):
     """Jaccard squared loss
 
@@ -119,7 +119,7 @@ def jaccard2_loss(y_true, y_pred, smooth=SMOOTH):
     """
     return 1 - jaccard2_coef(y_true, y_pred, smooth)
 
-
+@tf.function
 def jaccard1_coef(y_true, y_pred, smooth=SMOOTH):
     """Jaccard index coefficient
 
@@ -138,7 +138,7 @@ def jaccard1_coef(y_true, y_pred, smooth=SMOOTH):
     union = K.sum(y_true_f) + K.sum(y_pred_f) - intersection
     return (intersection + smooth) / (union + smooth)
 
-
+@tf.function
 def jaccard1_loss(y_true, y_pred, smooth=SMOOTH):
     """Jaccard loss
 
@@ -161,7 +161,7 @@ def jaccard1_loss(y_true, y_pred, smooth=SMOOTH):
 # alpha+beta=1   : produces set of F*-scores
 # implemented by E. Moebel, 06/04/18
 
-
+@tf.function
 def tversky_loss(y_true, y_pred, alpha=0.3, beta=0.7, smooth=1e-10):
     """ Tversky loss function.
 
@@ -297,7 +297,7 @@ def categorical_focal_loss(gamma=2.0, alpha=0.25):
         y_pred = K.clip(y_pred, epsilon, 1.0 - epsilon)
 
         # Calculate Cross Entropy
-        cross_entropy = -tf.cast(y_true, dtype=tf.float32) * K.log(y_pred)
+        cross_entropy = -tf.cast(y_true, tf.float32) * K.log(y_pred)
 
         # Calculate Focal Loss
         loss = alpha * K.pow(1 - y_pred, gamma) * cross_entropy

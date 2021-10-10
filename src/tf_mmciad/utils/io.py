@@ -31,16 +31,18 @@ from tifffile import imread as tifread
 from tqdm.auto import tqdm
 from tf_mmciad.utils.window_ops import sliding_window as win_slider
 
+log_level = logging.ERROR
+
 logger = logging.getLogger(__name__)
 c_handler = logging.StreamHandler(sys.stderr)
 f_path = Path("/nb_projects/logfiles/io.log")
 f_path.mkdir(parents=True, exist_ok=True)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(log_level)
 f_handler = logging.handlers.RotatingFileHandler(
     f_path / "debug.log", maxBytes=2*1024**2, backupCount=5
 )
-f_handler.setLevel(logging.DEBUG)
-c_handler.setLevel(logging.DEBUG)
+f_handler.setLevel(log_level)
+c_handler.setLevel(log_level)
 log_format = logging.Formatter(
     "%(asctime)s - %(name)s - %(levelname)s: %(message)s",
     datefmt="%d/%m/%Y %H:%M:%S",
@@ -827,8 +829,13 @@ class ImageTiler:
             dummy = Image.new("RGB", (self.width, self.height), (0, 0, 0))
         for y in range(0, self.img_height - self.overlap, self.height - self.overlap):
             for x in range(0, self.img_width - self.overlap, self.width - self.overlap):
-                dx: int = min(x + self.width, self.img_width)
-                dy: int = min(y + self.height, self.img_height)
+                if y > self.img_height - self.height:
+                    y = self.img_height - self.height
+                if x > self.img_width - self.width:
+                    x = self.img_width - self.width
+                dx = x + self.width
+                dy = y + self.height
+
                 box = (x, y, dx, dy)
                 if sim:
                     yield dummy, box
@@ -953,10 +960,10 @@ class ImageAssembler:
         """
         path - Path to the multipage-tiff file
 
-        returns: n-channel image with the leading dimension being the channels
+        returns: n-channel image with the trailing dimension being the channels
         """
         #_, img = cv.imreadmulti(path, flags=cv.IMREAD_ANYDEPTH)
-        img = tifread(path)
+        img = np.moveaxis(tifread(path), 0, -1)
         ndimg = cp.array(img)
         return ndimg
 

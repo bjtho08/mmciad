@@ -2,31 +2,18 @@
 PatchedModelCheckpoint()
 """
 import warnings
+from pathlib import Path
 import os
+import resource
+import sys
 import logging
+import logging.handlers
 from time import sleep
 
 import numpy as np
-from twilio.rest import Client
 
 from tensorflow.keras.callbacks import Callback, TensorBoard
 import tensorflow.keras.backend as K
-
-
-class LossAndAccTextingCallback(Callback):
-    def __init__(self) -> None:
-        account_sid = "AC53419d4da859fe95426b41af641cda11"
-        auth_token = "7e45a775d99632d25e890afc78c6a177"
-        self.client = Client(account_sid, auth_token)
-
-    def on_epoch_end(self, epoch, logs=None):
-        message = self.client.messages.create(
-            body=f"Loss for epoch {epoch} is {logs['loss']:2.4f} and acc is {logs['acc']:1:4f}",  # Message you send
-            from_="+17034207403",  # Provided phone number
-            to="+4528129716",  # Your phone number
-        )
-        print(message.sid)
-
 
 class TensorBoardWrapper(TensorBoard):
     '''Sets the self.validation_data property for use with TensorBoard callback.'''
@@ -37,7 +24,7 @@ class TensorBoardWrapper(TensorBoard):
         self.nb_steps = len(self.batch_gen)   # Number of times to call next() on the generator.
         self.batch_size = self.batch_gen.batch_size
 
-    def on_epoch_end(self, epoch, logs):
+    def on_epoch_end(self, epoch, log=dict()):
         # Fill in the `validation_data` property. Obviously this is specific to how your generator works.
         # Below is an example that yields images and classification tags.
         # After it's filled in, the regular on_epoch_end method has access to the validation_data.
@@ -50,7 +37,7 @@ class TensorBoardWrapper(TensorBoard):
             imgs[s * ib.shape[0]:(s + 1) * ib.shape[0]] = ib
             tags[s * tb.shape[0]:(s + 1) * tb.shape[0]] = tb
         self.validation_data = [imgs, tags, np.ones(imgs.shape[0]), 0.0]
-        return super().on_epoch_end(epoch, logs)
+        return super().on_epoch_end(epoch, log)
 
 
 # ...
@@ -65,7 +52,7 @@ class MemoryCallback(Callback):
         self.current_mem_usage = 1
         self.prev_mem_usage = 1
         
-    def on_epoch_end(self, epoch, log={}):
+    def on_epoch_end(self, epoch, log=dict()):
         self.prev_mem_usage = self.current_mem_usage
         self.current_mem_usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1000 # func returns kilobytes
         increase = (self.current_mem_usage / self.prev_mem_usage) * 100
@@ -145,7 +132,7 @@ class PatchedModelCheckpoint(Callback):
         self.save_weights_only = save_weights_only
         self.period = period
         self.epochs_since_last_save = 0
-        self.logger = logging.getLogger("Training Log")
+        self.logger = self.create_logger()
 
         if mode not in ["auto", "min", "max"]:
             warnings.warn(
@@ -176,7 +163,7 @@ class PatchedModelCheckpoint(Callback):
         self.epochs_since_last_save += 1
         if self.epochs_since_last_save >= self.period:
             self.epochs_since_last_save = 0
-            filepath = self.filepath.format(epoch=epoch + 1, **logs)
+            filepath = Path(self.filepath.format(epoch=epoch + 1, **logs))
             if self.save_best_only:
                 current = logs.get(self.monitor)
                 if current is None:
@@ -204,33 +191,14 @@ class PatchedModelCheckpoint(Callback):
                                 )
                             )
                         self.logger.info(
-                            "\nEpoch %5d: %s improved from %0.5f to %0.5f, saving ...",
+                            "Epoch %5d: %s improved from %0.5f to %0.5f, saving ...",
                             epoch + 1,
                             self.monitor,
                             self.best,
                             current,
                         )
                         self.best = current
-
-                        saved_correctly = False
-                        if self.previous_filepath and os.path.exists(
-                            self.previous_filepath
-                        ):
-                            os.remove(self.previous_filepath)
-                        while not saved_correctly:
-                            try:
-                                if self.save_weights_only:
-                                    self.model.save_weights(filepath, overwrite=True)
-                                else:
-                                    self.model.save(filepath, overwrite=True)
-                                saved_correctly = True
-                                self.previous_filepath = filepath
-                            except OSError as error:
-                                print(
-                                    f"Error while trying to save the model: {error}."
-                                    + "\nTrying again..."
-                                )
-                                sleep(5)
+                        self.save_checkpoint(filepath)
                     else:
                         if self.verbose > 0:
                             print(
@@ -240,23 +208,77 @@ class PatchedModelCheckpoint(Callback):
             else:
                 if self.verbose > 0:
                     print("\nEpoch %05d: saving model to %s" % (epoch + 1, filepath))
-                saved_correctly = False
-                if self.previous_filepath and os.path.exists(self.previous_filepath):
-                    os.remove(self.previous_filepath)
-                while not saved_correctly:
-                    try:
-                        if self.save_weights_only:
-                            self.model.save_weights(filepath, overwrite=True)
-                        else:
-                            self.model.save(filepath, overwrite=True)
-                        saved_correctly = True
-                        self.previous_filepath = filepath
-                    except OSError as error:
-                        print(
+                self.save_checkpoint(filepath)
+
+    def save_checkpoint(self, filepath: Path):
+        """Save the model in the SavedModel format.
+
+        Args:
+            filepath (Path): [description]
+        """
+        saved_correctly = False
+        if self.previous_filepath:
+            filepath = self.previous_filepath.rename(filepath)
+        while not saved_correctly:
+            try:
+                if self.save_weights_only:
+                    self.model.save_weights(filepath, overwrite=True)
+                else:
+                    self.model.save(filepath, overwrite=True)
+                saved_correctly = True
+                self.previous_filepath = Path(filepath)
+            except OSError as error:
+                print(
                             f"Error while trying to save the model: {error}."
                             + "\nTrying again..."
                         )
-                        sleep(5)
+                self.logger.exception("Error while trying to save the model.")
+                sleep(5)
+
+# Maybe change it from removing to just renaming?
+# Or remove it after creating the new checkpoint rather than before
+    def remove_previous_model_checkpoint(self):
+        """Remove the previous model checkpoint.
+        If the model is a SavedModel, iterate through subdirectories
+        and delete all files in that directory before deleting the directory itself.
+        """
+        path = Path(self.previous_filepath)
+        if not path.exists():
+            return
+        if path.is_dir():
+            for file in sorted(path.rglob('*'), key=lambda x: Path(x).is_dir()):
+                if file.is_file():
+                    file.unlink()
+                else:
+                    file.rmdir()
+            path.rmdir()
+        else:
+            path.unlink()
+
+    @staticmethod
+    def create_logger():
+        log_level = logging.DEBUG
+
+        logger = logging.getLogger(__name__ + ".PatchedModelCheckpoint")
+        c_handler = logging.StreamHandler(sys.stderr)
+        f_path = Path("/nb_projects/logfiles/callbacks")
+        f_path.mkdir(parents=True, exist_ok=True)
+        logger.setLevel(log_level)
+        f_handler = logging.handlers.RotatingFileHandler(
+            f_path / "debug.log", maxBytes=2*1024**2, backupCount=5
+        )
+        f_handler.setLevel(log_level)
+        c_handler.setLevel(log_level)
+        log_format = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s: %(message)s",
+            datefmt="%d/%m/%Y %H:%M:%S",
+        )
+        f_handler.setFormatter(log_format)
+        c_handler.setFormatter(log_format)
+        logger.addHandler(f_handler)
+        logger.addHandler(c_handler)
+        return logger
+
 
 
 class DeadReluDetector(Callback):
